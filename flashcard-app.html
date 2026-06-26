@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LinguaCards — Language Flashcard Studio</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* ─── Custom Properties & Base ─────────────────────────────────── */
+    :root {
+      --navy:   #0F1B2D;
+      --sand:   #E8D5B0;
+      --coral:  #E8724A;
+      --slate:  #7C8FA6;
+      --cream:  #F5EED8;
+      --card-h: 340px;
+    }
+
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@700&display=swap');
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--navy);
+      color: #E2EAF4;
+      min-height: 100vh;
+    }
+
+    /* ─── 3-D Flip Card ─────────────────────────────────────────────── */
+    .flip-scene {
+      perspective: 1200px;
+      width: 100%;
+      height: var(--card-h);
+      cursor: pointer;
+    }
+    .flip-card {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      transform-style: preserve-3d;
+      transition: transform 0.55s cubic-bezier(0.45, 0.05, 0.55, 0.95);
+    }
+    .flip-card.revealed { transform: rotateY(180deg); }
+
+    .flip-face {
+      position: absolute;
+      inset: 0;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      border-radius: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2.5rem;
+    }
+    .flip-face--front {
+      background: var(--sand);
+      color: var(--navy);
+    }
+    .flip-face--back {
+      background: var(--cream);
+      color: var(--navy);
+      transform: rotateY(180deg);
+    }
+
+    /* ─── Scrollbar ─────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2A3F5A; border-radius: 4px; }
+
+    /* ─── Sidebar active state ──────────────────────────────────────── */
+    .nav-item.active { background: rgba(232,114,74,0.18); color: #E8724A; }
+    .nav-sub.active  { color: #E8724A; font-weight: 600; }
+
+    /* ─── Status badge colours ──────────────────────────────────────── */
+    .badge-difficult { background:#FEE2E2; color:#991B1B; }
+    .badge-easy      { background:#D1FAE5; color:#065F46; }
+    .badge-favorite  { background:#FEF3C7; color:#92400E; }
+    .badge-done      { background:#E0E7FF; color:#3730A3; }
+    .badge-unmarked  { background:#F1F5F9; color:#475569; }
+
+    /* ─── Pulse animation for card hint ────────────────────────────── */
+    @keyframes hint-pulse {
+      0%,100% { opacity:.5; }
+      50%      { opacity:1; }
+    }
+    .hint-pulse { animation: hint-pulse 2s ease-in-out infinite; }
+
+    /* ─── Smooth transitions ────────────────────────────────────────── */
+    .slide-in { animation: slideIn 0.25s ease; }
+    @keyframes slideIn {
+      from { opacity:0; transform:translateY(8px); }
+      to   { opacity:1; transform:translateY(0); }
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback, useMemo, useRef } = React;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION 1 — PARSER UTILITY
+//  Converts the raw multi-line vocabulary text into a structured JSON array.
+//  Handles:
+//    • UPPERCASE category header detection
+//    • Numbered entry lines  → word + translation
+//    • Second line per entry → example sentence + example translation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * parseFlaschardText(rawText)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * @param {string} rawText – Raw pasted/uploaded vocabulary text
+ * @returns {{ cards: Card[], categories: string[] }}
+ *
+ * Card shape:
+ * {
+ *   id          : string,          // e.g. "cat0-entry21"
+ *   category    : string,          // header this card belongs to
+ *   number      : number,          // ordinal from the source text
+ *   word        : string,          // target-language word
+ *   meaning     : string,          // English translation of word
+ *   example     : string,          // target-language example sentence
+ *   exampleMeaning: string,        // English translation of example
+ *   status      : CardStatus,      // 'unmarked'|'difficult'|'easy'|'favorite'|'done'
+ * }
+ */
+function parseFlashcardText(rawText) {
+  const lines = rawText
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.length > 0);
+
+  const cards      = [];
+  const categories = [];
+  let   currentCat = 'Uncategorized';
+  let   catIndex   = 0;
+  let   entryIndex = 0;
+  let   i          = 0;
+
+  // ── Regex helpers ──────────────────────────────────────────────────
+  // Matches: "21. Evet Yes"  →  groups: [num, word, meaning]
+  const ENTRY_RE = /^(\d+)\.\s+(\S+)\s+(.+)$/;
+
+  // A header is a line that is (a) ALL CAPS (ignoring spaces/punctuation)
+  // and (b) does NOT start with a digit
+  const isHeader = (line) =>
+    /^[A-ZÇĞİÖŞÜ\s,()\/\-&]+$/.test(line) && !/^\d/.test(line) && line.length > 3;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // ── Detect category header ────────────────────────────────────────
+    if (isHeader(line)) {
+      currentCat = line;
+      if (!categories.includes(currentCat)) {
+        categories.push(currentCat);
+        catIndex++;
+        entryIndex = 0;
+      }
+      i++;
+      continue;
+    }
+
+    // ── Detect numbered vocabulary entry ─────────────────────────────
+    const match = ENTRY_RE.exec(line);
+    if (match) {
+      const [, numStr, word, meaning] = match;
+      const num = parseInt(numStr, 10);
+
+      // Look ahead for the example sentence line (next non-empty line)
+      let example        = '';
+      let exampleMeaning = '';
+
+      if (i + 1 < lines.length) {
+        const nextLine = lines[i + 1];
+        // The example line: NOT a numbered entry and NOT a header
+        if (!ENTRY_RE.test(nextLine) && !isHeader(nextLine)) {
+          // Split at the FIRST period that is followed by a space + capital
+          // e.g. "Evet, biliyorum. Yes, I know."
+          const exSplit = nextLine.match(/^(.+?\.\s*)([A-Z].+)$/);
+          if (exSplit) {
+            example        = exSplit[1].trim();
+            exampleMeaning = exSplit[2].trim();
+          } else {
+            // Fallback: the whole line is the example (no English part found)
+            example = nextLine;
+          }
+          i++; // consume example line
+        }
+      }
+
+      cards.push({
+        id             : `cat${catIndex}-entry${num}`,
+        category       : currentCat,
+        number         : num,
+        word           : word,
+        meaning        : meaning,
+        example        : example,
+        exampleMeaning : exampleMeaning,
+        status         : 'unmarked',
+      });
+
+      entryIndex++;
+      i++;
+      continue;
+    }
+
+    // Skip unrecognised lines
+    i++;
+  }
+
+  return { cards, categories };
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION 2 — LOCAL STORAGE HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const LS_CARDS_KEY    = 'lingua_cards_v1';
+const LS_SETTINGS_KEY = 'lingua_settings_v1';
+
+function loadCards() {
+  try {
+    const raw = localStorage.getItem(LS_CARDS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function saveCards(cards) {
+  try { localStorage.setItem(LS_CARDS_KEY, JSON.stringify(cards)); } catch {}
+}
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(LS_SETTINGS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function saveSettings(settings) {
+  try { localStorage.setItem(LS_SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION 3 — CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const ALL_WORDS_KEY = '__ALL_WORDS__';
+
+const STATUS_LABELS = {
+  all       : 'All',
+  unmarked  : 'Unmarked',
+  difficult : 'Difficult',
+  easy      : 'Easy',
+  favorite  : 'Favorite',
+  done      : 'Done',
+};
+
+const STATUS_ICONS = {
+  all       : '📋',
+  unmarked  : '⬜',
+  difficult : '🔴',
+  easy      : '🟢',
+  favorite  : '⭐',
+  done      : '✅',
+};
+
+const STATUS_ORDER = ['all', 'unmarked', 'difficult', 'easy', 'favorite', 'done'];
+
+const DEFAULT_SETTINGS = {
+  resetOnNav : true,
+  shuffle    : false,
+  audioEnabled: false,
+};
+
+// Sample Turkish data so the app is immediately usable
+const SAMPLE_TEXT = `BASIC TURKISH NOUNS AND ADJECTIVES
+1. Evet Yes
+Evet, biliyorum. Yes, I know.
+2. Hayır No
+Hayır, gelmeyeceğim. No, I will not come.
+3. Lütfen Please
+Lütfen oturun. Please sit down.
+4. Teşekkür ederim Thanks
+Teşekkür ederim, çok naziksiniz. Thanks, you are very kind.
+5. Özür dilerim Sorry
+Özür dilerim, geç kaldım. Sorry, I am late.
+6. Merhaba Hello
+Merhaba, nasılsınız? Hello, how are you?
+7. Günaydın Good morning
+Günaydın, iyi misiniz? Good morning, are you well?
+8. İyi akşamlar Good evening
+İyi akşamlar, hoş geldiniz. Good evening, welcome.
+9. Hoşça kal Goodbye
+Hoşça kal, görüşürüz. Goodbye, see you later.
+10. Evet efendim Yes sir/ma'am
+Evet efendim, anlıyorum. Yes sir, I understand.
+
+COMMON TURKISH VERBS
+11. Gel Come
+Gel buraya. Come here.
+12. Git Go
+Git eve. Go home.
+13. Bak Look
+Bak oraya. Look there.
+14. Dinle Listen
+Dinle beni. Listen to me.
+15. Konuş Speak
+Konuş yavaş. Speak slowly.
+16. Anla Understand
+Anlıyor musun? Do you understand?
+17. Bil Know
+Bilmiyorum. I don't know.
+18. Gör See
+Onu görüyor musun? Do you see it?
+19. Yap Do/Make
+Ne yapıyorsun? What are you doing?
+20. Ver Give
+Bana ver. Give it to me.
+
+TURKISH NUMBERS
+21. Bir One
+Bir elma istiyorum. I want one apple.
+22. İki Two
+İki çocuğum var. I have two children.
+23. Üç Three
+Üç gün sonra. After three days.
+24. Dört Four
+Dört saat bekledi. He waited four hours.
+25. Beş Five
+Beş dakika bekle. Wait five minutes.`;
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION 4 — FLASHCARD COMPONENT
+//  The physical card that flips to reveal the translation.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function Flashcard({ card, onStatusChange }) {
+  const [revealed, setRevealed] = useState(false);
+
+  // Allow parent to reset reveal via a key prop change
+  // (when resetOnNav is true, parent changes the key)
+  useEffect(() => { setRevealed(false); }, [card?.id]);
+
+  if (!card) return null;
+
+  const statusColors = {
+    unmarked : 'bg-slate-100 text-slate-600',
+    difficult: 'bg-red-100 text-red-700',
+    easy     : 'bg-emerald-100 text-emerald-700',
+    favorite : 'bg-amber-100 text-amber-700',
+    done     : 'bg-indigo-100 text-indigo-700',
+  };
+
+  return (
+    <div className="flex flex-col items-center gap-6 w-full max-w-lg mx-auto slide-in">
+
+      {/* Card number & category badge */}
+      <div className="flex items-center gap-3 text-xs" style={{color:'var(--slate)'}}>
+        <span className="font-mono">#{card.number}</span>
+        <span>·</span>
+        <span className="truncate max-w-xs">{card.category}</span>
+      </div>
+
+      {/* ── 3-D Flip Scene ─────────────────────────────────────────────── */}
+      <div className="flip-scene w-full" onClick={() => setRevealed(r => !r)}>
+        <div className={`flip-card ${revealed ? 'revealed' : ''}`}>
+
+          {/* FRONT — foreign word */}
+          <div className="flip-face flip-face--front select-none">
+            <p className="text-xs font-semibold tracking-widest uppercase mb-4"
+               style={{color:'var(--slate)'}}>
+              {revealed ? 'tap to hide' : 'tap to reveal'}
+            </p>
+            <h2 className="text-5xl font-bold text-center mb-2"
+                style={{fontFamily:"'Playfair Display', serif", color:'var(--navy)'}}>
+              {card.word}
+            </h2>
+            {!revealed && (
+              <p className="text-sm mt-6 hint-pulse" style={{color:'var(--slate)'}}>
+                Click anywhere on the card ↓
+              </p>
+            )}
+          </div>
+
+          {/* BACK — translation + example */}
+          <div className="flip-face flip-face--back select-none">
+            <p className="text-xs font-semibold tracking-widest uppercase mb-3"
+               style={{color:'var(--slate)'}}>meaning</p>
+            <h2 className="text-4xl font-bold text-center mb-5"
+                style={{fontFamily:"'Playfair Display', serif", color:'var(--navy)'}}>
+              {card.meaning}
+            </h2>
+            {card.example && (
+              <div className="w-full border-t pt-4 mt-2 text-center"
+                   style={{borderColor:'rgba(15,27,45,0.1)'}}>
+                <p className="text-sm font-medium italic mb-1" style={{color:'var(--navy)'}}>
+                  {card.example}
+                </p>
+                <p className="text-xs" style={{color:'var(--slate)'}}>
+                  {card.exampleMeaning}
+                </p>
+              </div>
+            )}
+          </div>
+
+        </div>
+      </div>
+
+      {/* ── Status Marking Buttons ─────────────────────────────────────── */}
+      <div className="flex gap-2 flex-wrap justify-center">
+        {['difficult','easy','favorite','done','unmarked'].map(s => (
+          <button
+            key={s}
+            onClick={() => onStatusChange(card.id, s)}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all
+              ${card.status === s
+                ? statusColors[s] + ' ring-2 ring-offset-2 ring-current scale-105'
+                : 'bg-white/10 text-white/60 hover:bg-white/20'
+              }`}
+          >
+            {STATUS_ICONS[s]} {s.charAt(0).toUpperCase() + s.slice(1)}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION 5 — SETTINGS PANEL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function SettingsPanel({ settings, onChange, onClose }) {
+  const Toggle = ({ label, desc, field }) => (
+    <div className="flex items-start justify-between gap-4 py-3 border-b border-white/10">
+      <div>
+        <p className="text-sm font-medium">{label}</p>
+        <p className="text-xs mt-0.5" style={{color:'var(--slate)'}}>{desc}</p>
+      </div>
+      <button
+        onClick={() => onChange({ ...settings, [field]: !settings[field] })}
+        className={`relative shrink-0 w-11 h-6 rounded-full transition-colors mt-0.5
+          ${settings[field] ? 'bg-orange-500' : 'bg-white/20'}`}
+      >
+        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white
+          shadow transition-transform ${settings[field] ? 'translate-x-5' : ''}`} />
+      </button>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center"
+         style={{background:'rgba(15,27,45,0.85)', backdropFilter:'blur(6px)'}}>
+      <div className="rounded-2xl p-6 w-full max-w-sm"
+           style={{background:'#162236', border:'1px solid rgba(255,255,255,0.08)'}}>
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="text-lg font-bold">Settings</h3>
+          <button onClick={onClose}
+            className="text-white/40 hover:text-white transition-colors text-xl leading-none">×</button>
+        </div>
+        <Toggle
+          label="Reset on Navigation"
+          desc="Hide translation when moving to next/previous card."
+          field="resetOnNav"
+        />
+        <Toggle
+          label="Shuffle Mode"
+          desc="Randomise card order within the active deck."
+          field="shuffle"
+        />
+        <Toggle
+          label="Audio (Coming Soon)"
+          desc="Text-to-speech pronunciation for each word."
+          field="audioEnabled"
+        />
+        <p className="text-xs mt-4" style={{color:'var(--slate)'}}>
+          Settings are saved automatically to your browser.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION 6 — IMPORT PANEL
+//  Text-area parser to load new vocabulary data
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function ImportPanel({ onImport, onClose }) {
+  const [text, setText]   = useState(SAMPLE_TEXT);
+  const [error, setError] = useState('');
+
+  const handleImport = () => {
+    if (!text.trim()) { setError('Please paste some text first.'); return; }
+    const result = parseFlashcardText(text);
+    if (result.cards.length === 0) {
+      setError('No cards found. Make sure the format matches the expected structure.');
+      return;
+    }
+    onImport(result);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+         style={{background:'rgba(15,27,45,0.9)', backdropFilter:'blur(8px)'}}>
+      <div className="rounded-2xl p-6 w-full max-w-2xl flex flex-col gap-4"
+           style={{background:'#162236', border:'1px solid rgba(255,255,255,0.08)'}}>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-bold">Import Vocabulary</h3>
+            <p className="text-xs mt-0.5" style={{color:'var(--slate)'}}>
+              Paste your formatted vocabulary text below.
+            </p>
+          </div>
+          <button onClick={onClose}
+            className="text-white/40 hover:text-white transition-colors text-2xl leading-none">×</button>
+        </div>
+
+        {/* Format hint */}
+        <div className="rounded-lg p-3 text-xs font-mono"
+             style={{background:'rgba(255,255,255,0.04)', color:'#94A3B8'}}>
+          <p className="font-semibold text-white/70 mb-1">Expected format:</p>
+          <p>CATEGORY HEADER IN CAPS</p>
+          <p>1. Word Translation</p>
+          <p>Example sentence. English translation.</p>
+        </div>
+
+        <textarea
+          className="w-full h-56 rounded-xl p-4 text-sm font-mono resize-none
+                     focus:outline-none focus:ring-2 focus:ring-orange-500"
+          style={{background:'rgba(255,255,255,0.06)', color:'#E2EAF4',
+                  border:'1px solid rgba(255,255,255,0.1)'}}
+          value={text}
+          onChange={e => { setText(e.target.value); setError(''); }}
+          placeholder="Paste your vocabulary text here…"
+          spellCheck={false}
+        />
+
+        {error && <p className="text-red-400 text-xs">{error}</p>}
+
+        <div className="flex gap-3">
+          <button onClick={handleImport}
+            className="flex-1 py-2.5 rounded-xl font-semibold text-sm transition-all
+                       hover:opacity-90 active:scale-95"
+            style={{background:'var(--coral)', color:'white'}}>
+            Parse & Load Cards
+          </button>
+          <button onClick={onClose}
+            className="px-5 py-2.5 rounded-xl font-semibold text-sm
+                       bg-white/10 hover:bg-white/15 transition-all">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION 7 — SIDEBAR NAV
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function Sidebar({ categories, cards, activeCategory, activeStatus, onSelect, onOpenImport }) {
+  const [expanded, setExpanded] = useState({});
+
+  // Auto-expand active category
+  useEffect(() => {
+    setExpanded(prev => ({ ...prev, [activeCategory]: true }));
+  }, [activeCategory]);
+
+  const toggle = (key) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
+
+  const countFor = (catKey, status) => {
+    const pool = catKey === ALL_WORDS_KEY ? cards : cards.filter(c => c.category === catKey);
+    return status === 'all' ? pool.length : pool.filter(c => c.status === status).length;
+  };
+
+  const NavItem = ({ catKey, label }) => {
+    const isExpanded = expanded[catKey];
+    const isCatActive = activeCategory === catKey;
+
+    return (
+      <div className="mb-1">
+        <button
+          onClick={() => { toggle(catKey); onSelect(catKey, 'all'); }}
+          className={`w-full flex items-center justify-between px-3 py-2 rounded-lg
+            text-xs font-semibold tracking-wide transition-all text-left
+            ${isCatActive ? 'active' : 'hover:bg-white/8'}
+          `}
+          style={{color: isCatActive ? 'var(--coral)' : '#94A3B8'}}
+        >
+          <span className="truncate pr-2">{label}</span>
+          <span className="flex items-center gap-1.5 shrink-0">
+            <span className="text-xs px-1.5 py-0.5 rounded-md"
+                  style={{background:'rgba(255,255,255,0.08)'}}>
+              {countFor(catKey, 'all')}
+            </span>
+            <span className="transition-transform text-xs"
+                  style={{transform: isExpanded ? 'rotate(90deg)' : ''}}>›</span>
+          </span>
+        </button>
+
+        {isExpanded && (
+          <div className="ml-3 mt-0.5 border-l pl-3 flex flex-col gap-0.5"
+               style={{borderColor:'rgba(255,255,255,0.08)'}}>
+            {STATUS_ORDER.map(s => {
+              const count = countFor(catKey, s);
+              const isActive = isCatActive && activeStatus === s;
+              return (
+                <button
+                  key={s}
+                  onClick={() => onSelect(catKey, s)}
+                  className={`w-full flex items-center justify-between
+                    px-2 py-1.5 rounded-md text-xs transition-all
+                    ${isActive ? 'nav-sub active' : 'text-white/40 hover:text-white/70'}`}
+                >
+                  <span>{STATUS_ICONS[s]} {STATUS_LABELS[s]}</span>
+                  <span className="text-xs opacity-60">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <aside className="flex flex-col h-full overflow-hidden"
+           style={{width:240, background:'#0D1926', borderRight:'1px solid rgba(255,255,255,0.06)'}}>
+
+      {/* Logo */}
+      <div className="px-5 py-5 shrink-0">
+        <h1 className="text-base font-bold tracking-tight"
+            style={{color:'var(--coral)'}}>
+          Lingua<span style={{color:'white'}}>Cards</span>
+        </h1>
+        <p className="text-xs mt-0.5" style={{color:'var(--slate)'}}>Language Flash Studio</p>
+      </div>
+
+      {/* Import button */}
+      <div className="px-4 mb-4 shrink-0">
+        <button onClick={onOpenImport}
+          className="w-full py-2 rounded-lg text-xs font-semibold transition-all
+                     hover:opacity-90 active:scale-95"
+          style={{background:'rgba(232,114,74,0.15)', color:'var(--coral)',
+                  border:'1px solid rgba(232,114,74,0.3)'}}>
+          + Import Vocabulary
+        </button>
+      </div>
+
+      {/* Nav list */}
+      <nav className="flex-1 overflow-y-auto px-3 pb-4">
+        {cards.length === 0 ? (
+          <p className="text-xs px-2 py-3" style={{color:'var(--slate)'}}>
+            No cards yet. Import vocabulary to get started.
+          </p>
+        ) : (
+          <>
+            <p className="text-xs px-2 mb-2 font-semibold tracking-widest uppercase"
+               style={{color:'var(--slate)'}}>Library</p>
+            <NavItem catKey={ALL_WORDS_KEY} label="✦ All Words" />
+            <p className="text-xs px-2 mt-4 mb-2 font-semibold tracking-widest uppercase"
+               style={{color:'var(--slate)'}}>Categories</p>
+            {categories.map(cat => (
+              <NavItem key={cat} catKey={cat} label={cat} />
+            ))}
+          </>
+        )}
+      </nav>
+    </aside>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION 8 — MAIN APP
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function App() {
+  // ── Persistent state ──────────────────────────────────────────────────────
+  const [cards, setCards]         = useState(() => loadCards() || []);
+  const [categories, setCategories] = useState(() => {
+    const saved = loadCards();
+    if (!saved) return [];
+    return [...new Set(saved.map(c => c.category))];
+  });
+  const [settings, setSettings]   = useState(() => loadSettings() || DEFAULT_SETTINGS);
+
+  // ── Navigation state ──────────────────────────────────────────────────────
+  const [activeCategory, setActiveCategory] = useState(ALL_WORDS_KEY);
+  const [activeStatus,   setActiveStatus]   = useState('all');
+  const [cardIndex,      setCardIndex]      = useState(0);
+
+  // ── UI state ──────────────────────────────────────────────────────────────
+  const [showSettings, setShowSettings] = useState(false);
+  const [showImport,   setShowImport]   = useState(false);
+  // Key trick: changing this resets the Flashcard's internal reveal state
+  const [cardKey,      setCardKey]      = useState(0);
+
+  // ── Persist to localStorage on change ────────────────────────────────────
+  useEffect(() => { saveCards(cards); }, [cards]);
+  useEffect(() => { saveSettings(settings); }, [settings]);
+
+  // ── Build the active deck ─────────────────────────────────────────────────
+  const activeDeck = useMemo(() => {
+    let pool = activeCategory === ALL_WORDS_KEY
+      ? cards
+      : cards.filter(c => c.category === activeCategory);
+
+    if (activeStatus !== 'all') {
+      pool = pool.filter(c => c.status === activeStatus);
+    }
+
+    if (settings.shuffle) {
+      // Fisher-Yates on a copy (deterministic per filter change; re-shuffle via toggle)
+      pool = [...pool];
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+    }
+
+    return pool;
+  }, [cards, activeCategory, activeStatus, settings.shuffle]);
+
+  // ── Clamp index when deck changes ─────────────────────────────────────────
+  useEffect(() => {
+    setCardIndex(i => Math.min(i, Math.max(0, activeDeck.length - 1)));
+  }, [activeDeck.length]);
+
+  const currentCard = activeDeck[cardIndex] || null;
+
+  // ── Navigation helpers ────────────────────────────────────────────────────
+  const navigate = useCallback((dir) => {
+    setCardIndex(i => {
+      const next = i + dir;
+      if (next < 0 || next >= activeDeck.length) return i;
+      return next;
+    });
+    if (settings.resetOnNav) setCardKey(k => k + 1);
+  }, [activeDeck.length, settings.resetOnNav]);
+
+  const handleSelect = (catKey, status) => {
+    setActiveCategory(catKey);
+    setActiveStatus(status);
+    setCardIndex(0);
+    if (settings.resetOnNav) setCardKey(k => k + 1);
+  };
+
+  // ── Status mutation ───────────────────────────────────────────────────────
+  const handleStatusChange = useCallback((cardId, newStatus) => {
+    setCards(prev => prev.map(c =>
+      c.id === cardId ? { ...c, status: newStatus } : c
+    ));
+  }, []);
+
+  // ── Import handler ────────────────────────────────────────────────────────
+  const handleImport = ({ cards: newCards, categories: newCats }) => {
+    // Merge with existing, preserving statuses of cards that already exist
+    setCards(prev => {
+      const existingById = Object.fromEntries(prev.map(c => [c.id, c]));
+      return newCards.map(nc => ({
+        ...nc,
+        status: existingById[nc.id]?.status ?? nc.status,
+      }));
+    });
+    setCategories(newCats);
+    setActiveCategory(ALL_WORDS_KEY);
+    setActiveStatus('all');
+    setCardIndex(0);
+    setShowImport(false);
+  };
+
+  // ── Keyboard navigation ───────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') navigate(1);
+      if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   navigate(-1);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [navigate]);
+
+  // ── Empty state — prompt import ───────────────────────────────────────────
+  useEffect(() => {
+    if (cards.length === 0) setShowImport(true);
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  return (
+    <div className="flex h-screen overflow-hidden">
+
+      {/* Sidebar */}
+      <Sidebar
+        categories={categories}
+        cards={cards}
+        activeCategory={activeCategory}
+        activeStatus={activeStatus}
+        onSelect={handleSelect}
+        onOpenImport={() => setShowImport(true)}
+      />
+
+      {/* Main content */}
+      <main className="flex-1 flex flex-col overflow-hidden">
+
+        {/* Top bar */}
+        <header className="shrink-0 px-8 py-4 flex items-center justify-between"
+                style={{borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
+          <div>
+            <h2 className="font-semibold text-sm">
+              {activeCategory === ALL_WORDS_KEY ? 'All Words' : activeCategory}
+            </h2>
+            <p className="text-xs mt-0.5" style={{color:'var(--slate)'}}>
+              {STATUS_ICONS[activeStatus]} {STATUS_LABELS[activeStatus]}
+              {activeDeck.length > 0 && ` · ${cardIndex + 1} of ${activeDeck.length}`}
+            </p>
+          </div>
+          <button
+            onClick={() => setShowSettings(true)}
+            className="px-4 py-2 rounded-lg text-xs font-medium transition-all
+                       bg-white/8 hover:bg-white/12"
+          >
+            ⚙ Settings
+          </button>
+        </header>
+
+        {/* Card area */}
+        <div className="flex-1 overflow-y-auto flex flex-col items-center
+                        justify-center px-6 py-8">
+
+          {activeDeck.length === 0 ? (
+            <div className="text-center">
+              <p className="text-4xl mb-4">📭</p>
+              <p className="font-semibold mb-1">No cards in this view</p>
+              <p className="text-sm" style={{color:'var(--slate)'}}>
+                Try switching to "All" or importing more vocabulary.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Flashcard (key change resets internal reveal) */}
+              <Flashcard
+                key={`${currentCard?.id}-${cardKey}`}
+                card={currentCard}
+                onStatusChange={handleStatusChange}
+              />
+
+              {/* Navigation */}
+              <div className="flex items-center gap-4 mt-8">
+                <button
+                  onClick={() => navigate(-1)}
+                  disabled={cardIndex === 0}
+                  className="px-6 py-2.5 rounded-xl font-semibold text-sm transition-all
+                             disabled:opacity-30 disabled:cursor-not-allowed
+                             bg-white/10 hover:bg-white/15 active:scale-95"
+                >
+                  ← Prev
+                </button>
+
+                {/* Progress dots (max 7 visible) */}
+                <div className="flex gap-1.5 items-center">
+                  {activeDeck.slice(
+                    Math.max(0, cardIndex - 3),
+                    Math.min(activeDeck.length, cardIndex + 4)
+                  ).map((_, relIdx) => {
+                    const absIdx = Math.max(0, cardIndex - 3) + relIdx;
+                    return (
+                      <button
+                        key={absIdx}
+                        onClick={() => { setCardIndex(absIdx); if(settings.resetOnNav) setCardKey(k=>k+1); }}
+                        className="rounded-full transition-all"
+                        style={{
+                          width  : absIdx === cardIndex ? 20 : 6,
+                          height : 6,
+                          background: absIdx === cardIndex ? 'var(--coral)' : 'rgba(255,255,255,0.2)',
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+
+                <button
+                  onClick={() => navigate(1)}
+                  disabled={cardIndex >= activeDeck.length - 1}
+                  className="px-6 py-2.5 rounded-xl font-semibold text-sm transition-all
+                             disabled:opacity-30 disabled:cursor-not-allowed
+                             active:scale-95"
+                  style={{background:'var(--coral)', color:'white'}}
+                >
+                  Next →
+                </button>
+              </div>
+
+              {/* Keyboard hint */}
+              <p className="text-xs mt-4" style={{color:'var(--slate)'}}>
+                ← → arrow keys also navigate
+              </p>
+            </>
+          )}
+        </div>
+      </main>
+
+      {/* Modals */}
+      {showSettings && (
+        <SettingsPanel
+          settings={settings}
+          onChange={s => setSettings(s)}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
+      {showImport && (
+        <ImportPanel
+          onImport={handleImport}
+          onClose={() => setShowImport(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Mount ──────────────────────────────────────────────────────────────────────
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
