@@ -33,6 +33,12 @@ npm run build    # production build -> dist/
 - **Custom sub-categories (tags)** — beyond the built-in Difficult /
   Easy / Favorite / Done, add your own tags from any category's "+ New
   tag" control. Tags can be renamed; custom tags can also be deleted.
+- **"Unread" sub-category** — a derived, always-on view (right under
+  "All") showing every card that doesn't have the "Done" tag yet — so
+  unfinished or never-reviewed words are always easy to find in one
+  place, in any category. It isn't a real tag: there's no button for
+  it on the flashcard, and nothing to rename or delete — it's just the
+  complement of "Done", computed live, so it can never fall out of sync.
 - **Multi-tagging** — a card can hold several tags at once (e.g. Easy +
   Done, or Favorite + Done). The one exception: Difficult and Easy are
   mutually exclusive — selecting one clears the other.

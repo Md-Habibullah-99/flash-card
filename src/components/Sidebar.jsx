@@ -2,9 +2,15 @@
  * Sidebar.jsx
  * ------------
  * The "card-catalog drawer" navigation. Top level = categories (with
- * "All Words" pinned first), each expandable to show its tag sub-views
- * (All / Difficult / Easy / Favorite / Done / any custom tags) with
- * live counts.
+ * "All Words" pinned first), each expandable to show its tag sub-views:
+ * All, Unread, Difficult, Easy, Favorite, Done, plus any custom tags —
+ * each with a live count.
+ *
+ * "Unread" is a DERIVED sub-view (see UNREAD_TAG_ID in categoryTree.js):
+ * it's every card that doesn't have "done" yet, computed on the fly.
+ * It's rendered right under "All" but has no rename/delete controls and
+ * never appears as a button on the flashcard — there's nothing to
+ * toggle, so it can never drift out of sync with the real tags.
  *
  * Category management: every category except "All Words" has a small
  * overflow menu for merging it into another existing category (or
@@ -19,8 +25,8 @@
  *  - categories: string[] — from getCategoryList()
  *  - activeCategory, activeTag: the current selection
  *  - onSelect: (category, tagId) => void
- *  - getCounts: (category) => { all, [tagId]: count, ... }
- *  - tags: the full active tag list, each { id, label, builtIn }
+ *  - getCounts: (category) => { all, unread, [tagId]: count, ... }
+ *  - tags: the full active REAL tag list, each { id, label, builtIn } (unread is not in here)
  *  - onMergeCategory: (fromCategory, toCategory) => void
  *  - onAddTag: (label) => void
  *  - onRenameTag: (tagId, newLabel) => void
@@ -39,7 +45,7 @@ import {
   Check,
   X,
 } from "lucide-react";
-import { tagLabel, ALL_WORDS_CATEGORY } from "../utils/categoryTree";
+import { tagLabel, ALL_WORDS_CATEGORY, UNREAD_TAG_ID } from "../utils/categoryTree";
 
 export default function Sidebar({
   categories,
@@ -229,6 +235,26 @@ export default function Sidebar({
                     >
                       <span>{tagLabel("all")}</span>
                       <span className="font-mono text-[11px] text-ink/35">{counts.all}</span>
+                    </button>
+                  </li>
+
+                  {/* Derived "Unread" row — every card without the "done" tag.
+                      No rename/delete here: it isn't a real tag, just a
+                      standing filter, so it can never get out of sync. */}
+                  <li>
+                    <button
+                      type="button"
+                      onClick={() => onSelect(category, UNREAD_TAG_ID)}
+                      className={`w-full flex items-center justify-between px-2 py-1.5 rounded-sm font-body text-[13px] transition-colors ${
+                        isCategoryActive && activeTag === UNREAD_TAG_ID
+                          ? "bg-accent/10 text-accent font-medium"
+                          : "text-ink/65 hover:bg-ink/[0.04]"
+                      }`}
+                    >
+                      <span>{tagLabel(UNREAD_TAG_ID)}</span>
+                      <span className="font-mono text-[11px] text-ink/35">
+                        {counts[UNREAD_TAG_ID] ?? 0}
+                      </span>
                     </button>
                   </li>
 

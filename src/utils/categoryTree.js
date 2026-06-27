@@ -42,6 +42,21 @@ export const BUILT_IN_TAGS = [
   { id: "done", label: "Done", builtIn: true },
 ];
 
+/**
+ * UNREAD — a DERIVED pseudo-tag, not a real entry in `statuses`.
+ *
+ * Every card starts here by default, and a card leaves automatically
+ * the moment "done" is added to it — there's nothing to toggle, so it
+ * never appears as a button on the flashcard and never shows up in tag
+ * management (rename/delete). It exists purely as a sidebar sub-view
+ * so a learner can find "everything I haven't finished yet" in one
+ * place, in any category, without it ever drifting out of sync with
+ * the real tags (it's just `!statuses.includes('done')`, computed on
+ * the fly like every other filter in this file).
+ */
+export const UNREAD_TAG_ID = "unread";
+export const UNREAD_TAG = { id: UNREAD_TAG_ID, label: "Unread", builtIn: true, derived: true };
+
 // Tag id pairs that exclude each other — adding one strips the other
 // from the same card. Expressed as pairs so more exclusivity rules
 // could be added later without touching the marking logic itself.
@@ -58,6 +73,7 @@ export function getExclusiveTagsFor(tagId) {
 
 export function tagLabel(tagId, tags) {
   if (tagId === "all") return "All";
+  if (tagId === UNREAD_TAG_ID) return UNREAD_TAG.label;
   const tag = (tags || BUILT_IN_TAGS).find((t) => t.id === tagId);
   return tag ? tag.label : tagId;
 }
@@ -90,12 +106,17 @@ export function getCardsForCategory(cards, category) {
 
 /**
  * Applies a tag sub-category filter on top of a category's cards.
- * 'all' returns the category's full list unfiltered. Any other value
- * is treated as a tag id and matches cards whose `statuses` array
- * includes it.
+ * 'all' returns the category's full list unfiltered. 'unread' (the
+ * derived pseudo-tag) returns every card that does NOT have "done" in
+ * its statuses — there's no stored "unread" value to match against.
+ * Any other value is treated as a real tag id and matches cards whose
+ * `statuses` array includes it.
  */
 export function filterByTag(cards, tagId) {
   if (tagId === "all") return cards;
+  if (tagId === UNREAD_TAG_ID) {
+    return cards.filter((c) => !(Array.isArray(c.statuses) && c.statuses.includes("done")));
+  }
   return cards.filter((c) => Array.isArray(c.statuses) && c.statuses.includes(tagId));
 }
 
@@ -113,11 +134,14 @@ export function getActiveDeck(cards, category, tagId) {
  * Counts cards per tag within a category — used to show badge counts
  * in the sidebar (e.g. "Difficult (4)") so learners can see progress
  * without opening each sub-category. `tags` should be the full active
- * tag list (built-ins + custom) so counts include user-created tags too.
+ * REAL tag list (built-ins + custom) so counts include user-created
+ * tags too. The derived "unread" count is always included regardless
+ * of what's in `tags`, since it isn't a real tag a user manages.
  */
 export function getTagCounts(cards, category, tags) {
   const categoryCards = getCardsForCategory(cards, category);
   const counts = { all: categoryCards.length };
+  counts[UNREAD_TAG_ID] = filterByTag(categoryCards, UNREAD_TAG_ID).length;
   for (const tag of tags) {
     counts[tag.id] = categoryCards.filter(
       (c) => Array.isArray(c.statuses) && c.statuses.includes(tag.id)
