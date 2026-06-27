@@ -8,14 +8,19 @@
  *  - Clicking ANYWHERE on the card boundary performs a 3D flip
  *    (rotateY) between the word side and the meaning side, rather than
  *    a simple fade — this is the app's signature interaction.
- *  - Status buttons (Difficult / Easy / Favorite / Done) sit below the
- *    card so they're always reachable without flipping.
+ *  - Tag buttons (Difficult / Easy / Favorite / Done + any custom tags)
+ *    sit below the card so they're always reachable without flipping.
+ *    A card can hold MULTIPLE tags at once (e.g. "Easy" + "Done"); the
+ *    only exception is Difficult/Easy, which are mutually exclusive —
+ *    selecting one silently clears the other (enforced in
+ *    utils/categoryTree.js, reflected here purely as visual state).
  *
  * Props:
- *  - card: the active flashcard object { id, word, meaning, example, exampleMeaning, status }
+ *  - card: the active flashcard object { id, word, meaning, example, exampleMeaning, statuses }
+ *  - tags: the full active tag list (built-ins + custom), each { id, label, builtIn }
  *  - isRevealed: boolean — whether the meaning side is currently showing
  *  - onToggleReveal: () => void — called when the card is clicked
- *  - onSetStatus: (status) => void — called when a status button is pressed
+ *  - onToggleTag: (tagId) => void — called when a tag button is pressed
  */
 
 import React from "react";
@@ -24,36 +29,19 @@ import {
   CircleCheck,
   TriangleAlert,
   Sparkles,
+  Tag as TagIcon,
 } from "lucide-react";
 
-const STATUS_BUTTONS = [
-  {
-    key: "difficult",
-    label: "Difficult",
-    Icon: TriangleAlert,
-    activeClasses: "bg-accent text-paper border-accent",
-  },
-  {
-    key: "easy",
-    label: "Easy",
-    Icon: Sparkles,
-    activeClasses: "bg-sage text-paper border-sage",
-  },
-  {
-    key: "favorite",
-    label: "Favorite",
-    Icon: Heart,
-    activeClasses: "bg-brass text-paper border-brass",
-  },
-  {
-    key: "done",
-    label: "Done",
-    Icon: CircleCheck,
-    activeClasses: "bg-ink text-paper border-ink",
-  },
-];
+// Visual treatment for the four built-in tags. Custom tags fall back to
+// a generic ink-colored treatment with a plain tag icon.
+const BUILT_IN_STYLES = {
+  difficult: { Icon: TriangleAlert, activeClasses: "bg-accent text-paper border-accent" },
+  easy: { Icon: Sparkles, activeClasses: "bg-sage text-paper border-sage" },
+  favorite: { Icon: Heart, activeClasses: "bg-brass text-paper border-brass" },
+  done: { Icon: CircleCheck, activeClasses: "bg-ink text-paper border-ink" },
+};
 
-export default function Flashcard({ card, isRevealed, onToggleReveal, onSetStatus }) {
+export default function Flashcard({ card, tags, isRevealed, onToggleReveal, onToggleTag }) {
   if (!card) {
     return (
       <div className="flex flex-col items-center justify-center h-72 border-2 border-dashed border-rule rounded-sm text-ink/50 font-body">
@@ -113,15 +101,18 @@ export default function Flashcard({ card, isRevealed, onToggleReveal, onSetStatu
         </button>
       </div>
 
-      {/* Status marking row */}
+      {/* Tag marking row — a card can hold several of these at once */}
       <div className="flex flex-wrap gap-2 mt-5 justify-center">
-        {STATUS_BUTTONS.map(({ key, label, Icon, activeClasses }) => {
-          const isActive = card.status === key;
+        {tags.map((tag) => {
+          const isActive = Array.isArray(card.statuses) && card.statuses.includes(tag.id);
+          const style = BUILT_IN_STYLES[tag.id];
+          const Icon = style ? style.Icon : TagIcon;
+          const activeClasses = style ? style.activeClasses : "bg-rule text-ink border-rule";
           return (
             <button
-              key={key}
+              key={tag.id}
               type="button"
-              onClick={() => onSetStatus(key)}
+              onClick={() => onToggleTag(tag.id)}
               aria-pressed={isActive}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-sm border font-body text-sm transition-colors ${
                 isActive
@@ -130,7 +121,7 @@ export default function Flashcard({ card, isRevealed, onToggleReveal, onSetStatu
               }`}
             >
               <Icon size={14} />
-              {label}
+              {tag.label}
             </button>
           );
         })}

@@ -2,14 +2,15 @@
  * App.jsx
  * --------
  * Top-level layout and state wiring. Deliberately thin: all persistence
- * and marking logic lives in hooks/useFlashcards.js, all category/status
+ * and marking logic lives in hooks/useFlashcards.js, all category/tag
  * filtering logic lives in utils/categoryTree.js, and all deck-position
  * logic lives in hooks/useDeckNavigation.js. This file's only job is to
- * connect those pieces to the visual components.
+ * connect those pieces to the visual components, plus the global
+ * keyboard shortcuts (Space to flip, arrows to navigate).
  *
  * View states:
- *  1. Import view — shown when there are no cards yet.
- *  2. Study view — sidebar (categories/status) + active flashcard + controls.
+ *  1. Import view — shown when there are no cards yet, or via "Add words".
+ *  2. Study view — sidebar (categories/tags) + active flashcard + controls.
  */
 
 import React, { useState, useMemo } from "react";
@@ -23,30 +24,46 @@ import ImportPanel from "./components/ImportPanel";
 
 import { useFlashcards } from "./hooks/useFlashcards";
 import { useDeckNavigation } from "./hooks/useDeckNavigation";
+import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import {
   getCategoryList,
   getActiveDeck,
-  getStatusCounts,
+  getTagCounts,
   ALL_WORDS_CATEGORY,
 } from "./utils/categoryTree";
 
 export default function App() {
-  const { cards, settings, importCards, setCardStatus, updateSetting, resetAll } =
-    useFlashcards();
+  const {
+    cards,
+    settings,
+    tags,
+    formatProfiles,
+    importCards,
+    addCards,
+    toggleTag,
+    updateSetting,
+    resetAll,
+    mergeCategory,
+    addCustomTag,
+    renameTag,
+    deleteCustomTag,
+    saveFormatProfile,
+    deleteFormatProfile,
+  } = useFlashcards();
 
   const [activeCategory, setActiveCategory] = useState(ALL_WORDS_CATEGORY);
-  const [activeStatus, setActiveStatus] = useState("all");
+  const [activeTag, setActiveTag] = useState("all");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
 
   const categories = useMemo(() => getCategoryList(cards), [cards]);
 
   const activeDeck = useMemo(
-    () => getActiveDeck(cards, activeCategory, activeStatus),
-    [cards, activeCategory, activeStatus]
+    () => getActiveDeck(cards, activeCategory, activeTag),
+    [cards, activeCategory, activeTag]
   );
 
-  const deckKey = `${activeCategory}::${activeStatus}`;
+  const deckKey = `${activeCategory}::${activeTag}`;
 
   const {
     currentCard,
@@ -56,25 +73,31 @@ export default function App() {
     goNext,
     goPrevious,
     toggleReveal,
-  } = useDeckNavigation(
-    activeDeck,
-    deckKey,
-    settings.shuffleMode,
-    settings.resetMeaningOnNavigation
-  );
+  } = useDeckNavigation(activeDeck, deckKey, settings.shuffleMode, settings.resetMeaningOnNavigation);
 
-  const handleSelectCategory = (category, status) => {
+  const handleSelectCategory = (category, tagId) => {
     setActiveCategory(category);
-    setActiveStatus(status);
+    setActiveTag(tagId);
   };
 
-  const handleSetStatus = (status) => {
-    if (currentCard) setCardStatus(currentCard.id, status);
+  const handleToggleTag = (tagId) => {
+    if (currentCard) toggleTag(currentCard.id, tagId);
   };
 
-  const getCounts = (category) => getStatusCounts(cards, category);
+  const getCounts = (category) => getTagCounts(cards, category, tags);
 
-  const showImportView = cards.length === 0 || isImporting;
+  const hasExistingCards = cards.length > 0;
+  const showImportView = !hasExistingCards || isImporting;
+
+  // Keyboard shortcuts are only live while the study view (not an
+  // import/settings panel) is showing, so typing in the import textarea
+  // or a sidebar rename field never gets hijacked by Space/arrow keys.
+  useKeyboardShortcuts({
+    onFlip: toggleReveal,
+    onNext: goNext,
+    onPrevious: goPrevious,
+    enabled: !showImportView && !isSettingsOpen,
+  });
 
   return (
     <div className="paper-texture min-h-screen flex flex-col font-body">
@@ -110,10 +133,19 @@ export default function App() {
       {showImportView ? (
         <main className="flex-1">
           <ImportPanel
+            formatProfiles={formatProfiles}
+            onSaveFormatProfile={saveFormatProfile}
+            onDeleteFormatProfile={deleteFormatProfile}
             onImport={(newCards) => {
-              importCards(newCards);
+              // If cards already exist, this was opened via "Add words" —
+              // append instead of replacing, so existing progress survives.
+              if (hasExistingCards) {
+                addCards(newCards);
+              } else {
+                importCards(newCards);
+              }
               setActiveCategory(ALL_WORDS_CATEGORY);
-              setActiveStatus("all");
+              setActiveTag("all");
               setIsImporting(false);
             }}
           />
@@ -123,18 +155,24 @@ export default function App() {
           <Sidebar
             categories={categories}
             activeCategory={activeCategory}
-            activeStatus={activeStatus}
+            activeTag={activeTag}
             onSelect={handleSelectCategory}
             getCounts={getCounts}
+            tags={tags}
+            onMergeCategory={mergeCategory}
+            onAddTag={addCustomTag}
+            onRenameTag={renameTag}
+            onDeleteTag={deleteCustomTag}
           />
 
           <main className="flex-1 flex items-center justify-center px-6 py-10">
             <div className="w-full max-w-md">
               <Flashcard
                 card={currentCard}
+                tags={tags}
                 isRevealed={isRevealed}
                 onToggleReveal={toggleReveal}
-                onSetStatus={handleSetStatus}
+                onToggleTag={handleToggleTag}
               />
               <DeckControls
                 currentIndex={currentIndex}
@@ -142,6 +180,9 @@ export default function App() {
                 onPrevious={goPrevious}
                 onNext={goNext}
               />
+              <p className="text-center font-mono text-[11px] text-ink/30 mt-3">
+                Space to flip &middot; ← → to navigate
+              </p>
             </div>
           </main>
         </div>

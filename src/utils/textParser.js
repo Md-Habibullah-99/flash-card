@@ -118,7 +118,7 @@ export function parseVocabularyText(rawText) {
         meaning,
         example: "",
         exampleMeaning: "",
-        status: "unmarked",
+        statuses: [],
       };
       continue;
     }
