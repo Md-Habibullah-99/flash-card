@@ -15,18 +15,30 @@ npm run build    # production build -> dist/
 
 ## Features
 
-- **Multiple input formats** — numbered (`21. Word Meaning`), quoted
-  (`"Word" "Meaning"`), colon (`Word : Meaning`), space-separated
-  (`Word Meaning`), and three-line (`Word` / `Meaning` / `Example`).
-  Pick one from the format panel in the import screen.
-- **Custom regex format** — for anything the presets don't cover, write
-  your own regex with named groups `(?<word>)` `(?<meaning>)` and
-  optionally `(?<example>)` `(?<exampleMeaning>)`. Custom formats and
-  regex patterns can be saved as named profiles for reuse.
+- **Three ways to set the input format**:
+  - **Easy** (default) — answer two plain-language questions ("what
+    separates the word from its meaning?", "is there an example
+    line?") by picking from chips like *a space*, *a colon*, *a dash*,
+    *an arrow*, or typing your own symbol. A live preview shows the
+    parsed result as you choose, before you even click Parse. No regex
+    knowledge needed.
+  - **Preset** — five common fixed shapes: numbered
+    (`21. Word Meaning`), quoted (`"Word" "Meaning"`), colon
+    (`Word : Meaning`), space-separated (`Word Meaning`), and three-line
+    (`Word` / `Meaning` / `Example`).
+  - **Advanced** — write your own regex with named groups
+    `(?<word>)` `(?<meaning>)` `(?<example>)` `(?<exampleMeaning>)`,
+    for formats the other two modes can't express.
+  - Any of the three can be saved as a named profile for reuse.
 - **File import** — paste text directly, or load a `.txt`, `.pdf`
-  (text is extracted client-side), or `.json` file (already-structured
-  cards, with some tolerance for alternate key names like `term`/
-  `translation`).
+  (text extracted client-side via `pdfjs-dist`, lazy-loaded), or
+  `.json` file (tolerant of alternate key names like `term`/`translation`).
+- **Export** — from Settings, download your word list as `.txt` or
+  `.json`, scoped to: All Words (grouped by category), a single
+  category, or "no category" (grouped by sub-category/tag instead, so
+  a word with multiple tags appears once under each one it belongs to).
+- **History** — Settings shows the last 30 distinct words you've
+  viewed, most recent first, with relative timestamps and a clear button.
 - **Mergeable / renameable main categories** — use the ⋮ menu next to
   any category (except "All Words") to merge it into another category
   or just rename it.
@@ -53,20 +65,22 @@ parser.py                      Standalone Python parser (numbered text -> JSON)
 src/
   utils/
     textParser.js               Client-side parser for the original numbered format
+    easyFormatBuilder.js         Turns plain-language choices into a regex (the "Easy" mode)
     formatProfiles.js           All format presets + custom regex engine
     fileImport.js                .txt / .pdf / .json file reading and normalization
-    categoryTree.js              Categories, tags, multi-tag toggling, category merge
+    exportWords.js               Builds .txt / .json exports, scoped by category or tag
+    categoryTree.js              Categories, tags, multi-tag toggling, category merge, derived "unread"
     storage.js                   localStorage read/write + old-data migration
   hooks/
-    useFlashcards.js             Cards, tags, format profiles, marking engine, persistence
+    useFlashcards.js             Cards, tags, format profiles, history, marking engine, persistence
     useDeckNavigation.js         Active deck position, shuffle, reveal-reset
     useKeyboardShortcuts.js      Space/Enter to flip, arrows to navigate
   components/
     Sidebar.jsx                  Category "drawer" + tag sub-filters, category/tag management
     Flashcard.jsx                The interactive index-card (click-to-flip, multi-tag buttons)
     DeckControls.jsx             Previous / Next navigation
-    SettingsPanel.jsx            Slide-in settings drawer
-    ImportPanel.jsx              Format selection + paste/file import
+    SettingsPanel.jsx            Slide-in settings drawer: preferences, export, history, reset
+    ImportPanel.jsx              Easy/Preset/Advanced format selection + paste/file import
   App.jsx                        Layout + wiring between the above
   main.jsx, index.css            Entry point + design tokens / global styles
 tailwind.config.js               Color palette (paper/ink/rule/accent/sage/brass) + fonts

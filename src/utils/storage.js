@@ -18,6 +18,7 @@ const KEYS = {
   SETTINGS: "flashcards.settings.v1",
   TAGS: "flashcards.tags.v1",
   FORMAT_PROFILES: "flashcards.formatProfiles.v1",
+  HISTORY: "flashcards.history.v1",
 };
 
 /** Default settings used the very first time the app loads. */
@@ -103,9 +104,27 @@ export function saveFormatProfiles(profiles) {
   }
 }
 
+/**
+ * Loads the "recently viewed" history — the last 30 cards that became
+ * the active card in the deck viewer, most recent first. See
+ * useFlashcards.js's recordView() for how entries are added and capped.
+ */
+export function loadHistory() {
+  return safeParse(localStorage.getItem(KEYS.HISTORY), []);
+}
+
+export function saveHistory(history) {
+  try {
+    localStorage.setItem(KEYS.HISTORY, JSON.stringify(history));
+  } catch (err) {
+    console.error("Failed to save history to localStorage.", err);
+  }
+}
+
 export function clearAllData() {
   localStorage.removeItem(KEYS.CARDS);
   localStorage.removeItem(KEYS.SETTINGS);
   localStorage.removeItem(KEYS.TAGS);
   localStorage.removeItem(KEYS.FORMAT_PROFILES);
+  localStorage.removeItem(KEYS.HISTORY);
 }

@@ -19,9 +19,13 @@ import {
   saveTags,
   loadFormatProfiles,
   saveFormatProfiles,
+  loadHistory,
+  saveHistory,
   clearAllData,
 } from "../utils/storage";
 import { toggleCardTag, mergeCategories, ALL_WORDS_CATEGORY } from "../utils/categoryTree";
+
+const HISTORY_LIMIT = 30;
 
 export function useFlashcards() {
   // Lazy initializers so localStorage is only read once, on first mount.
@@ -29,6 +33,7 @@ export function useFlashcards() {
   const [settings, setSettings] = useState(() => loadSettings());
   const [tags, setTags] = useState(() => loadTags());
   const [formatProfiles, setFormatProfiles] = useState(() => loadFormatProfiles());
+  const [history, setHistory] = useState(() => loadHistory());
 
   // Persist each piece of state any time it changes. These are the
   // single write paths — every status update, import, tag edit, or
@@ -49,6 +54,10 @@ export function useFlashcards() {
   useEffect(() => {
     saveFormatProfiles(formatProfiles);
   }, [formatProfiles]);
+
+  useEffect(() => {
+    saveHistory(history);
+  }, [history]);
 
   /**
    * Replaces the entire deck — used when a new vocabulary text block is
@@ -106,12 +115,42 @@ export function useFlashcards() {
     setSettings((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  /** Wipes all cards, tags, and format profiles, and resets settings — used by the Reset Data control. */
+  /** Wipes all cards, tags, format profiles, and history, and resets settings — used by the Reset Data control. */
   const resetAll = useCallback(() => {
     clearAllData();
     setCards([]);
     setTags(loadTags()); // re-seed with built-ins
     setFormatProfiles([]);
+    setHistory([]);
+  }, []);
+
+  // ---- History (last 30 viewed words) ----------------------------------
+
+  /**
+   * Records that `card` just became the active card in the deck viewer.
+   * Most-recent-first; re-viewing a card already in the list moves it
+   * back to the front instead of creating a duplicate entry, so the
+   * history reads as "the last 30 DISTINCT moments you looked at a
+   * word" rather than getting flooded by one card you're staring at.
+   * Capped at HISTORY_LIMIT entries — oldest entries fall off the end.
+   */
+  const recordView = useCallback((card) => {
+    if (!card) return;
+    setHistory((prev) => {
+      const withoutThisCard = prev.filter((entry) => entry.cardId !== card.id);
+      const newEntry = {
+        cardId: card.id,
+        word: card.word,
+        meaning: card.meaning,
+        category: card.category,
+        viewedAt: new Date().toISOString(),
+      };
+      return [newEntry, ...withoutThisCard].slice(0, HISTORY_LIMIT);
+    });
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    setHistory([]);
   }, []);
 
   // ---- Category management -------------------------------------------
@@ -178,6 +217,7 @@ export function useFlashcards() {
     settings,
     tags,
     formatProfiles,
+    history,
     importCards,
     addCards,
     toggleTag,
@@ -189,5 +229,7 @@ export function useFlashcards() {
     deleteCustomTag,
     saveFormatProfile,
     deleteFormatProfile,
+    recordView,
+    clearHistory,
   };
 }

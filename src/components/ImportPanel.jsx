@@ -4,14 +4,19 @@
  * The import screen. Shown when there are no cards yet, or via "Add
  * words" later. Supports:
  *
- *  - Pasting raw text and parsing it with a chosen format (preset or
- *    custom regex) — see utils/formatProfiles.js.
+ *  - "Easy" format mode (default) — answer two plain-language
+ *    questions ("what separates the word from its meaning?", "is
+ *    there an example line?") and a regex is generated for you behind
+ *    the scenes. No regex knowledge required. Includes a live preview
+ *    that parses the first couple of lines as you type/choose.
+ *  - "Preset" mode — pick one of five common fixed shapes directly.
+ *  - "Advanced" mode — write your own regex with named groups, for
+ *    formats the easy builder can't express.
  *  - Loading a .txt or .pdf file (text is extracted, then run through
  *    the same format pipeline as pasted text).
- *  - Loading a .json file that already contains structured cards (or
- *    a close variant — see utils/fileImport.js's normalizeJsonCards).
- *  - Saving a custom regex/preset choice as a named profile for reuse
- *    next time, and re-selecting a saved profile from a dropdown.
+ *  - Loading a .json file that already contains structured cards.
+ *  - Saving the current format (any of the three modes) as a named
+ *    profile for reuse next time.
  *
  * Props:
  *  - onImport: (cards: Array) => void — called with the parsed array
@@ -20,10 +25,11 @@
  *  - onDeleteFormatProfile: (profileId) => void
  */
 
-import React, { useState, useRef } from "react";
-import { Upload, FileText, ChevronDown, Save, Trash2 } from "lucide-react";
+import React, { useState, useRef, useMemo } from "react";
+import { Upload, FileText, ChevronDown, Save, Trash2, CheckCircle2, AlertCircle } from "lucide-react";
 import { parseWithProfile, PRESETS } from "../utils/formatProfiles";
 import { readTextFile, extractPdfText, readJsonFile, getFileExtension } from "../utils/fileImport";
+import { SEPARATOR_OPTIONS, buildEasyProfile, describeEasyProfile } from "../utils/easyFormatBuilder";
 
 const PRESET_PLACEHOLDERS = {
   numbered: `BASIC TURKISH NOUNS AND ADJECTIVES
@@ -44,7 +50,44 @@ Yes
 Evet, biliyorum.`,
 };
 
+const EASY_PLACEHOLDER = `BASIC TURKISH NOUNS AND ADJECTIVES
+Evet Yes
+Evet, biliyorum. Yes, I know.`;
+
 const REGEX_PLACEHOLDER = String.raw`(?<word>\w+)\s+(?<meaning>\w+)\n(?<example>[^\n]+)`;
+
+/** Small radio-style chip used for separator choices in the Easy builder. */
+function SeparatorChips({ value, customValue, onChange, onCustomChange, idPrefix }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {SEPARATOR_OPTIONS.map((opt) => (
+        <button
+          key={opt.id}
+          type="button"
+          onClick={() => onChange(opt.id)}
+          className={`px-2.5 py-1 rounded-full text-xs font-body border transition-colors ${
+            value === opt.id
+              ? "bg-accent text-paper border-accent"
+              : "border-rule text-ink/70 hover:border-ink/40"
+          }`}
+        >
+          {opt.display}
+        </button>
+      ))}
+      {value === "custom" && (
+        <input
+          type="text"
+          value={customValue}
+          onChange={(e) => onCustomChange(e.target.value)}
+          placeholder="type it here, e.g. ::"
+          maxLength={6}
+          className={`px-2 py-1 rounded-full text-xs font-mono border w-32 focus:outline-none ${idPrefix}`}
+          style={{ borderColor: "#C9BCA3" }}
+        />
+      )}
+    </div>
+  );
+}
 
 export default function ImportPanel({
   onImport,
@@ -54,17 +97,78 @@ export default function ImportPanel({
 }) {
   const [text, setText] = useState("");
   const [error, setError] = useState(null);
-  const [formatMode, setFormatMode] = useState("preset"); // 'preset' | 'regex'
+  const [formatMode, setFormatMode] = useState("easy"); // 'easy' | 'preset' | 'regex'
   const [preset, setPreset] = useState("numbered");
   const [regexPattern, setRegexPattern] = useState("");
   const [regexFlags, setRegexFlags] = useState("m");
-  const [showFormatPanel, setShowFormatPanel] = useState(false);
+  const [showFormatPanel, setShowFormatPanel] = useState(true);
   const [saveProfileName, setSaveProfileName] = useState("");
   const fileInputRef = useRef(null);
 
-  const activeProfile = { mode: formatMode, preset, pattern: regexPattern, flags: regexFlags };
+  // Easy-builder answers
+  const [wordSeparatorId, setWordSeparatorId] = useState("space");
+  const [wordCustomValue, setWordCustomValue] = useState("");
+  const [hasExampleLine, setHasExampleLine] = useState(true);
+  const [sameExampleSeparator, setSameExampleSeparator] = useState(true);
+  const [exampleSeparatorId, setExampleSeparatorId] = useState("space");
+  const [exampleCustomValue, setExampleCustomValue] = useState("");
+
+  const easyAnswers = {
+    wordSeparatorId,
+    wordCustomValue,
+    hasExampleLine,
+    exampleSeparatorId: sameExampleSeparator ? wordSeparatorId : exampleSeparatorId,
+    exampleCustomValue: sameExampleSeparator ? wordCustomValue : exampleCustomValue,
+  };
+
+  // Builds the actual profile to run, depending on which mode is active.
+  const activeProfile = useMemo(() => {
+    if (formatMode === "easy") {
+      try {
+        return buildEasyProfile(easyAnswers);
+      } catch {
+        return null; // not enough info yet (e.g. custom separator left blank)
+      }
+    }
+    if (formatMode === "regex") {
+      return { mode: "regex", pattern: regexPattern, flags: regexFlags };
+    }
+    return { mode: "preset", preset };
+  }, [formatMode, easyAnswers, regexPattern, regexFlags, preset]);
+
+  // Live preview: try parsing just the textarea's content (or, if it's
+  // empty, the relevant placeholder) so the learner can see whether
+  // their format choice actually works BEFORE clicking the main button.
+  const previewSource = text.trim()
+    ? text
+    : formatMode === "easy"
+    ? EASY_PLACEHOLDER
+    : formatMode === "preset"
+    ? PRESET_PLACEHOLDERS[preset]
+    : "";
+
+  const preview = useMemo(() => {
+    if (!activeProfile || !previewSource) return { ok: false, cards: [], error: null };
+    try {
+      const cards = parseWithProfile(previewSource, activeProfile);
+      return { ok: true, cards: cards.slice(0, 3), error: null };
+    } catch (err) {
+      return { ok: false, cards: [], error: err.message };
+    }
+  }, [activeProfile, previewSource]);
 
   const applyProfile = (profile) => {
+    if (profile.mode === "easy") {
+      setFormatMode("easy");
+      setWordSeparatorId(profile.wordSeparatorId || "space");
+      setWordCustomValue(profile.wordCustomValue || "");
+      setHasExampleLine(!!profile.hasExampleLine);
+      const sameSep = !profile.exampleSeparatorId || profile.exampleSeparatorId === profile.wordSeparatorId;
+      setSameExampleSeparator(sameSep);
+      setExampleSeparatorId(profile.exampleSeparatorId || profile.wordSeparatorId || "space");
+      setExampleCustomValue(profile.exampleCustomValue || "");
+      return;
+    }
     setFormatMode(profile.mode);
     if (profile.mode === "preset") setPreset(profile.preset || "numbered");
     if (profile.mode === "regex") {
@@ -74,6 +178,10 @@ export default function ImportPanel({
   };
 
   const handleParseText = (rawText) => {
+    if (!activeProfile) {
+      setError("Finish setting up the format first.");
+      return;
+    }
     try {
       const cards = parseWithProfile(rawText, activeProfile);
       setError(null);
@@ -101,28 +209,36 @@ export default function ImportPanel({
       if (extension === "pdf") {
         const extracted = await extractPdfText(file);
         setText(extracted);
-        // Let the user review/adjust before parsing, rather than
-        // auto-parsing — PDF text extraction can need a quick glance.
         setError(null);
         return;
       }
 
-      // .txt and anything else readable as plain text.
       const raw = await readTextFile(file);
       setText(raw);
       setError(null);
     } catch (err) {
       setError(err.message || "Could not read this file.");
     } finally {
-      event.target.value = ""; // allow re-selecting the same file later
+      event.target.value = "";
     }
   };
 
   const handleSaveProfile = () => {
     if (!saveProfileName.trim()) return;
-    onSaveFormatProfile?.({ ...activeProfile, name: saveProfileName.trim() });
+    const profileToSave =
+      formatMode === "easy"
+        ? { mode: "easy", ...easyAnswers, name: saveProfileName.trim() }
+        : { ...activeProfile, name: saveProfileName.trim() };
+    onSaveFormatProfile?.(profileToSave);
     setSaveProfileName("");
   };
+
+  const currentFormatSummary =
+    formatMode === "regex"
+      ? "Advanced (custom regex)"
+      : formatMode === "preset"
+      ? PRESETS.find((p) => p.id === preset)?.label
+      : describeEasyProfile(easyAnswers);
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-10">
@@ -142,12 +258,7 @@ export default function ImportPanel({
         className="w-full flex items-center justify-between px-3 py-2 mb-2 rounded-sm border border-rule text-sm text-ink/75 hover:border-ink/40 transition-colors"
       >
         <span className="font-body">
-          Input format:{" "}
-          <span className="font-medium text-ink">
-            {formatMode === "regex"
-              ? "Custom regex"
-              : PRESETS.find((p) => p.id === preset)?.label}
-          </span>
+          Input format: <span className="font-medium text-ink">{currentFormatSummary}</span>
         </span>
         <ChevronDown
           size={15}
@@ -158,31 +269,87 @@ export default function ImportPanel({
       {showFormatPanel && (
         <div className="border border-rule rounded-sm p-4 mb-4 bg-ink/[0.02]">
           <div className="flex gap-2 mb-3">
-            <button
-              type="button"
-              onClick={() => setFormatMode("preset")}
-              className={`px-3 py-1.5 rounded-sm text-sm font-body border transition-colors ${
-                formatMode === "preset"
-                  ? "bg-accent text-paper border-accent"
-                  : "border-rule text-ink/70 hover:border-ink/40"
-              }`}
-            >
-              Preset format
-            </button>
-            <button
-              type="button"
-              onClick={() => setFormatMode("regex")}
-              className={`px-3 py-1.5 rounded-sm text-sm font-body border transition-colors ${
-                formatMode === "regex"
-                  ? "bg-accent text-paper border-accent"
-                  : "border-rule text-ink/70 hover:border-ink/40"
-              }`}
-            >
-              Custom regex
-            </button>
+            {[
+              { id: "easy", label: "Easy (no regex)" },
+              { id: "preset", label: "Preset" },
+              { id: "regex", label: "Advanced" },
+            ].map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setFormatMode(m.id)}
+                className={`px-3 py-1.5 rounded-sm text-sm font-body border transition-colors ${
+                  formatMode === m.id
+                    ? "bg-accent text-paper border-accent"
+                    : "border-rule text-ink/70 hover:border-ink/40"
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
           </div>
 
-          {formatMode === "preset" ? (
+          {/* ----- EASY MODE: plain-language questions, no regex shown ----- */}
+          {formatMode === "easy" && (
+            <div className="flex flex-col gap-4">
+              <p className="text-xs text-ink/50 -mt-1">
+                Answer two quick questions about how your list is laid out — no
+                code needed. Each entry should look like:{" "}
+                <span className="font-mono text-[11px] bg-ink/[0.06] px-1 rounded">
+                  Word [separator] Meaning
+                </span>
+              </p>
+
+              <div>
+                <label className="text-sm font-body font-medium text-ink block mb-1.5">
+                  1. What separates the word from its meaning?
+                </label>
+                <SeparatorChips
+                  value={wordSeparatorId}
+                  customValue={wordCustomValue}
+                  onChange={setWordSeparatorId}
+                  onCustomChange={setWordCustomValue}
+                  idPrefix="word-sep"
+                />
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2 text-sm font-body font-medium text-ink cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={hasExampleLine}
+                    onChange={(e) => setHasExampleLine(e.target.checked)}
+                  />
+                  2. Does each word have an example sentence on the next line?
+                </label>
+
+                {hasExampleLine && (
+                  <div className="mt-2 ml-6 flex flex-col gap-2">
+                    <label className="flex items-center gap-2 text-xs text-ink/60 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={sameExampleSeparator}
+                        onChange={(e) => setSameExampleSeparator(e.target.checked)}
+                      />
+                      The example line uses the same separator
+                    </label>
+                    {!sameExampleSeparator && (
+                      <SeparatorChips
+                        value={exampleSeparatorId}
+                        customValue={exampleCustomValue}
+                        onChange={setExampleSeparatorId}
+                        onCustomChange={setExampleCustomValue}
+                        idPrefix="example-sep"
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ----- PRESET MODE ----- */}
+          {formatMode === "preset" && (
             <div className="flex flex-col gap-1.5">
               {PRESETS.map((p) => (
                 <label
@@ -205,7 +372,10 @@ export default function ImportPanel({
                 </label>
               ))}
             </div>
-          ) : (
+          )}
+
+          {/* ----- ADVANCED / REGEX MODE ----- */}
+          {formatMode === "regex" && (
             <div className="flex flex-col gap-2">
               <label className="text-xs font-body text-ink/60">
                 Regex pattern — use named groups{" "}
@@ -216,6 +386,7 @@ export default function ImportPanel({
                 <code className="font-mono text-[11px] bg-ink/[0.06] px-1 rounded">
                   (?&lt;example&gt;) (?&lt;exampleMeaning&gt;)
                 </code>
+                . Most people won't need this — try "Easy" above first.
               </label>
               <input
                 type="text"
@@ -239,6 +410,37 @@ export default function ImportPanel({
               </div>
             </div>
           )}
+
+          {/* ----- LIVE PREVIEW (shown for all three modes) ----- */}
+          <div className="mt-4 pt-3 border-t border-rule">
+            <span className="text-[11px] text-ink/40 uppercase tracking-wide block mb-1.5">
+              Preview {text.trim() ? "" : "(using example text below)"}
+            </span>
+            {preview.ok ? (
+              <div className="flex flex-col gap-1">
+                {preview.cards.map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex items-center gap-2 text-xs font-mono bg-sage/10 text-ink/80 px-2 py-1 rounded-sm"
+                  >
+                    <CheckCircle2 size={12} className="text-sage flex-shrink-0" />
+                    <span className="font-semibold">{c.word || "—"}</span>
+                    <span className="text-ink/40">→</span>
+                    <span>{c.meaning || "—"}</span>
+                    {c.example && <span className="text-ink/40 truncate">· {c.example}</span>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 text-xs text-accent bg-accent/5 px-2 py-1.5 rounded-sm">
+                <AlertCircle size={13} className="flex-shrink-0 mt-0.5" />
+                <span>
+                  {preview.error ||
+                    "Finish the questions above to see a preview, or paste your real text below."}
+                </span>
+              </div>
+            )}
+          </div>
 
           {/* Save current format as a reusable profile */}
           <div className="flex items-center gap-2 mt-3 pt-3 border-t border-rule">
@@ -296,7 +498,11 @@ export default function ImportPanel({
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder={
-            formatMode === "preset" ? PRESET_PLACEHOLDERS[preset] : REGEX_PLACEHOLDER
+            formatMode === "easy"
+              ? EASY_PLACEHOLDER
+              : formatMode === "preset"
+              ? PRESET_PLACEHOLDERS[preset]
+              : REGEX_PLACEHOLDER
           }
           rows={12}
           className="w-full resize-none bg-transparent px-4 py-3 font-mono text-sm text-ink placeholder:text-ink/30 focus:outline-none"

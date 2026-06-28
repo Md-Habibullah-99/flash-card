@@ -13,7 +13,7 @@
  *  2. Study view — sidebar (categories/tags) + active flashcard + controls.
  */
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { Settings as SettingsIcon, Plus } from "lucide-react";
 
 import Sidebar from "./components/Sidebar";
@@ -38,6 +38,7 @@ export default function App() {
     settings,
     tags,
     formatProfiles,
+    history,
     importCards,
     addCards,
     toggleTag,
@@ -49,6 +50,8 @@ export default function App() {
     deleteCustomTag,
     saveFormatProfile,
     deleteFormatProfile,
+    recordView,
+    clearHistory,
   } = useFlashcards();
 
   const [activeCategory, setActiveCategory] = useState(ALL_WORDS_CATEGORY);
@@ -74,6 +77,16 @@ export default function App() {
     goPrevious,
     toggleReveal,
   } = useDeckNavigation(activeDeck, deckKey, settings.shuffleMode, settings.resetMeaningOnNavigation);
+
+  // Log every card that becomes the active one in the deck viewer, so
+  // "recently viewed" always reflects what the learner actually looked
+  // at — independent of which category/tag filter they were browsing
+  // through to get there. Keyed on the card's id so flipping/marking
+  // the SAME card doesn't re-log it; only actually navigating to a
+  // different card does.
+  useEffect(() => {
+    if (currentCard) recordView(currentCard);
+  }, [currentCard?.id, recordView]);
 
   const handleSelectCategory = (category, tagId) => {
     setActiveCategory(category);
@@ -198,6 +211,11 @@ export default function App() {
           setIsSettingsOpen(false);
           setIsImporting(true);
         }}
+        cards={cards}
+        categories={categories}
+        tags={tags}
+        history={history}
+        onClearHistory={clearHistory}
       />
     </div>
   );
