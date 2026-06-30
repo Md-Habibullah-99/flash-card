@@ -24,6 +24,7 @@ import {
   clearAllData,
 } from "../utils/storage";
 import { toggleCardTag, mergeCategories, ALL_WORDS_CATEGORY } from "../utils/categoryTree";
+import { findDuplicates } from "../utils/duplicates";
 
 const HISTORY_LIMIT = 30;
 
@@ -70,16 +71,95 @@ export function useFlashcards() {
   }, []);
 
   /**
+   * Checks `newCards` against the existing deck for duplicates (matched
+   * by word+meaning only — see utils/duplicates.js) WITHOUT writing
+   * anything to state yet. The caller (ImportPanel / SettingsPanel) uses
+   * this to show the user what would be skipped vs added, and lets them
+   * choose before actually committing via addCards/restoreCards.
+   */
+  const checkForDuplicates = useCallback(
+    (newCards) => findDuplicates(cards, newCards),
+    [cards]
+  );
+
+  /**
    * Adds newly parsed cards to the existing deck rather than replacing
    * it — used by "Add words" so importing a second vocabulary list
    * doesn't wipe progress on the first one. Card ids are renumbered to
    * avoid collisions with existing ids.
+   *
+   * @param {Array} newCards
+   * @param {{skipDuplicateIds?: Set<string>}} [options] - if provided,
+   *   any newCard whose `id` is in skipDuplicateIds is left out. This is
+   *   how the duplicate-resolution UI says "add everything EXCEPT the
+   *   ones I chose to skip" without needing this function to re-run
+   *   duplicate detection itself.
    */
-  const addCards = useCallback((newCards) => {
+  const addCards = useCallback((newCards, options = {}) => {
+    const { skipDuplicateIds } = options;
+    const cardsToAdd = skipDuplicateIds
+      ? newCards.filter((c) => !skipDuplicateIds.has(c.id))
+      : newCards;
+
     setCards((prev) => {
       const existingIds = new Set(prev.map((c) => c.id));
       let counter = prev.length;
-      const renumbered = newCards.map((c) => {
+      const renumbered = cardsToAdd.map((c) => {
+        let id = c.id;
+        while (existingIds.has(id)) {
+          counter += 1;
+          id = `card-${String(counter).padStart(4, "0")}`;
+        }
+        existingIds.add(id);
+        return { ...c, id };
+      });
+      return [...prev, ...renumbered];
+    });
+  }, []);
+
+  /**
+   * Restores cards from a backup file (see utils/backupImport.js).
+   * Unlike addCards, this also re-creates any CUSTOM tags referenced in
+   * the restored cards' `statuses` that no longer exist in the current
+   * tag list (e.g. the user deleted a custom tag, then restores an
+   * older backup that still references it) — otherwise those cards
+   * would silently lose tags that should come back with the backup.
+   * Built-in tag ids (difficult/easy/favorite/done) always exist
+   * already, so this only ever adds back CUSTOM tags.
+   *
+   * Accepts the same `skipDuplicateIds` option as addCards.
+   */
+  const restoreCards = useCallback((newCards, options = {}) => {
+    const { skipDuplicateIds } = options;
+    const cardsToAdd = skipDuplicateIds
+      ? newCards.filter((c) => !skipDuplicateIds.has(c.id))
+      : newCards;
+
+    setTags((prevTags) => {
+      const existingIds = new Set(prevTags.map((t) => t.id));
+      const recreated = [];
+      for (const card of cardsToAdd) {
+        for (const tagId of card.statuses || []) {
+          if (!existingIds.has(tagId) && !recreated.some((t) => t.id === tagId)) {
+            // Re-create with a human label derived from the id, since
+            // the original label text isn't preserved in `statuses`
+            // (only the id is). The user can rename it afterward.
+            const label = tagId
+              .split("-")
+              .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+              .join(" ");
+            recreated.push({ id: tagId, label, builtIn: false });
+            existingIds.add(tagId);
+          }
+        }
+      }
+      return recreated.length > 0 ? [...prevTags, ...recreated] : prevTags;
+    });
+
+    setCards((prev) => {
+      const existingIds = new Set(prev.map((c) => c.id));
+      let counter = prev.length;
+      const renumbered = cardsToAdd.map((c) => {
         let id = c.id;
         while (existingIds.has(id)) {
           counter += 1;
@@ -220,6 +300,8 @@ export function useFlashcards() {
     history,
     importCards,
     addCards,
+    restoreCards,
+    checkForDuplicates,
     toggleTag,
     updateSetting,
     resetAll,

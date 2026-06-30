@@ -263,6 +263,57 @@ function looksLikeHeader(line) {
 }
 
 /**
+ * Runs a regex against text and returns the raw match spans with their
+ * named-group boundaries, WITHOUT turning them into card objects. Used
+ * purely for the visual "what is my regex selecting?" highlight preview
+ * in ImportPanel — parseWithCustomRegex (below) does the real parsing
+ * for actual imports; this is a read-only inspection of the same regex.
+ *
+ * Uses the regex 'd' (hasIndices) flag to get EXACT per-group character
+ * offsets directly from the engine, rather than guessing via indexOf —
+ * indexOf breaks as soon as two groups capture the same text (e.g. the
+ * word "Merhaba" appearing in both the word line and, coincidentally,
+ * the example line), which a learner's real vocabulary text does often
+ * enough that this needed to be exact, not approximate.
+ *
+ * Returns an array of { matchStart, matchEnd, groups: { word: {start,end}|null, ... } }
+ * one entry per match found, in document order.
+ */
+export function getRegexMatchSpans(rawText, pattern, flags) {
+  let regex;
+  try {
+    const safeFlags = new Set((flags || "").split(""));
+    safeFlags.add("g");
+    safeFlags.add("d"); // hasIndices — required for exact per-group offsets
+    regex = new RegExp(pattern, [...safeFlags].join(""));
+  } catch (err) {
+    throw new Error(`Invalid regular expression: ${err.message}`);
+  }
+
+  const spans = [];
+  let match;
+  let safetyCounter = 0;
+
+  while ((match = regex.exec(rawText)) !== null && safetyCounter < 5000) {
+    safetyCounter += 1;
+    const groupSpans = {};
+
+    if (match.groups && match.indices && match.indices.groups) {
+      for (const name of Object.keys(match.groups)) {
+        const range = match.indices.groups[name];
+        groupSpans[name] = range ? { start: range[0], end: range[1] } : null;
+      }
+    }
+
+    spans.push({ matchStart: match.index, matchEnd: match.index + match[0].length, groups: groupSpans });
+
+    if (match[0].length === 0) regex.lastIndex += 1; // avoid infinite loop on zero-length matches
+  }
+
+  return spans;
+}
+
+/**
  * Runs a user-supplied custom regex against the whole text at once.
  * The regex must use named groups: (?<word>...) and (?<meaning>...) are
  * required; (?<example>...) and (?<exampleMeaning>...) are optional.

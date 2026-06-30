@@ -21,6 +21,7 @@ import Flashcard from "./components/Flashcard";
 import DeckControls from "./components/DeckControls";
 import SettingsPanel from "./components/SettingsPanel";
 import ImportPanel from "./components/ImportPanel";
+import DuplicateReviewPanel from "./components/DuplicateReviewPanel";
 
 import { useFlashcards } from "./hooks/useFlashcards";
 import { useDeckNavigation } from "./hooks/useDeckNavigation";
@@ -41,6 +42,8 @@ export default function App() {
     history,
     importCards,
     addCards,
+    restoreCards,
+    checkForDuplicates,
     toggleTag,
     updateSetting,
     resetAll,
@@ -58,6 +61,15 @@ export default function App() {
   const [activeTag, setActiveTag] = useState("all");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+
+  // Set whenever a parsed/restored batch has one or more duplicates
+  // (by word+meaning) against the existing deck: { cards, mode }, where
+  // mode is 'import' (came from ImportPanel, uses addCards/importCards
+  // on confirm) or 'restore' (came from a Settings backup upload, uses
+  // restoreCards on confirm so tags get re-created too). While this is
+  // set, DuplicateReviewPanel replaces whatever view would otherwise be
+  // showing, so the learner resolves duplicates before anything commits.
+  const [pendingImport, setPendingImport] = useState(null);
 
   const categories = useMemo(() => getCategoryList(cards), [cards]);
 
@@ -100,7 +112,52 @@ export default function App() {
   const getCounts = (category) => getTagCounts(cards, category, tags);
 
   const hasExistingCards = cards.length > 0;
-  const showImportView = !hasExistingCards || isImporting;
+  const showImportView = (!hasExistingCards || isImporting) && !pendingImport;
+  const showDuplicateReview = !!pendingImport;
+
+  /**
+   * Entry point for BOTH the ImportPanel ("Add words" / first import)
+   * and the Settings backup-restore upload. Runs duplicate detection
+   * up front: if nothing duplicates, commit immediately (no extra
+   * friction for the common case); if anything does, hold the batch in
+   * `pendingImport` and show DuplicateReviewPanel so the learner
+   * decides what to do BEFORE it touches state.
+   */
+  const handleIncomingCards = (newCards, mode) => {
+    const { duplicates, unique } = checkForDuplicates(newCards);
+
+    if (duplicates.length === 0) {
+      commitCards(newCards, mode);
+      return;
+    }
+
+    setPendingImport({ cards: newCards, duplicates, unique, mode });
+  };
+
+  /** Actually writes a batch of cards to state, via the right path for the mode. */
+  const commitCards = (cardsToCommit, mode) => {
+    if (mode === "restore") {
+      restoreCards(cardsToCommit);
+    } else if (hasExistingCards) {
+      addCards(cardsToCommit);
+    } else {
+      importCards(cardsToCommit);
+    }
+    setActiveCategory(ALL_WORDS_CATEGORY);
+    setActiveTag("all");
+    setIsImporting(false);
+  };
+
+  const handleConfirmDuplicateReview = (skipIds) => {
+    const { cards: allParsedCards, mode } = pendingImport;
+    const cardsToCommit = allParsedCards.filter((c) => !skipIds.has(c.id));
+    commitCards(cardsToCommit, mode);
+    setPendingImport(null);
+  };
+
+  const handleCancelDuplicateReview = () => {
+    setPendingImport(null);
+  };
 
   // Keyboard shortcuts are only live while the study view (not an
   // import/settings panel) is showing, so typing in the import textarea
@@ -109,7 +166,7 @@ export default function App() {
     onFlip: toggleReveal,
     onNext: goNext,
     onPrevious: goPrevious,
-    enabled: !showImportView && !isSettingsOpen,
+    enabled: !showImportView && !showDuplicateReview && !isSettingsOpen,
   });
 
   return (
@@ -122,7 +179,7 @@ export default function App() {
           </span>
         </div>
         <div className="flex items-center gap-2">
-          {!showImportView && (
+          {!showImportView && !showDuplicateReview && (
             <button
               type="button"
               onClick={() => setIsImporting(true)}
@@ -143,27 +200,36 @@ export default function App() {
         </div>
       </header>
 
-      {showImportView ? (
+      {showDuplicateReview && (
         <main className="flex-1">
+          <DuplicateReviewPanel
+            duplicates={pendingImport.duplicates}
+            uniqueCount={pendingImport.unique.length}
+            onConfirm={handleConfirmDuplicateReview}
+            onCancel={handleCancelDuplicateReview}
+          />
+        </main>
+      )}
+
+      {/* ImportPanel stays MOUNTED (just hidden) while duplicate review is
+          showing on top of it for an 'import'-mode batch, rather than
+          being unmounted — otherwise cancelling the review would wipe
+          whatever text/format the learner had set up in the import
+          form, forcing them to redo it. A 'restore'-mode duplicate
+          review has no form underneath it to preserve, so ImportPanel
+          simply isn't rendered in that case. */}
+      {(showImportView || (showDuplicateReview && pendingImport.mode === "import")) && (
+        <main className={`flex-1 ${showDuplicateReview ? "hidden" : ""}`}>
           <ImportPanel
             formatProfiles={formatProfiles}
             onSaveFormatProfile={saveFormatProfile}
             onDeleteFormatProfile={deleteFormatProfile}
-            onImport={(newCards) => {
-              // If cards already exist, this was opened via "Add words" —
-              // append instead of replacing, so existing progress survives.
-              if (hasExistingCards) {
-                addCards(newCards);
-              } else {
-                importCards(newCards);
-              }
-              setActiveCategory(ALL_WORDS_CATEGORY);
-              setActiveTag("all");
-              setIsImporting(false);
-            }}
+            onImport={(newCards) => handleIncomingCards(newCards, "import")}
           />
         </main>
-      ) : (
+      )}
+
+      {!showImportView && !showDuplicateReview && (
         <div className="flex flex-1 flex-col md:flex-row">
           <Sidebar
             categories={categories}
@@ -216,6 +282,10 @@ export default function App() {
         tags={tags}
         history={history}
         onClearHistory={clearHistory}
+        onRestoreBackup={(restoredCards) => {
+          setIsSettingsOpen(false);
+          handleIncomingCards(restoredCards, "restore");
+        }}
       />
     </div>
   );

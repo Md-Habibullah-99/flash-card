@@ -30,6 +30,7 @@ import { Upload, FileText, ChevronDown, Save, Trash2, CheckCircle2, AlertCircle 
 import { parseWithProfile, PRESETS } from "../utils/formatProfiles";
 import { readTextFile, extractPdfText, readJsonFile, getFileExtension } from "../utils/fileImport";
 import { SEPARATOR_OPTIONS, buildEasyProfile, describeEasyProfile } from "../utils/easyFormatBuilder";
+import RegexHighlightPreview from "./RegexHighlightPreview";
 
 const PRESET_PLACEHOLDERS = {
   numbered: `BASIC TURKISH NOUNS AND ADJECTIVES
@@ -411,10 +412,21 @@ export default function ImportPanel({
             </div>
           )}
 
+          {/* ----- VISUAL HIGHLIGHT: shows exactly what's being selected, for Easy + Advanced modes ----- */}
+          {activeProfile?.mode === "regex" && (
+            <div className="mt-4 pt-3 border-t border-rule">
+              <RegexHighlightPreview
+                sampleText={previewSource}
+                pattern={activeProfile.pattern}
+                flags={activeProfile.flags}
+              />
+            </div>
+          )}
+
           {/* ----- LIVE PREVIEW (shown for all three modes) ----- */}
           <div className="mt-4 pt-3 border-t border-rule">
             <span className="text-[11px] text-ink/40 uppercase tracking-wide block mb-1.5">
-              Preview {text.trim() ? "" : "(using example text below)"}
+              Parsed result {text.trim() ? "" : "(using example text below)"}
             </span>
             {preview.ok ? (
               <div className="flex flex-col gap-1">

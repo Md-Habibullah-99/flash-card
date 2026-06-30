@@ -10,6 +10,10 @@
  *  - Export — download the word list as .txt or .json, scoped to
  *    All Words, a single category, or "no category" (grouped by
  *    sub-category/tag instead). See utils/exportWords.js.
+ *  - Restore — upload a previously exported .txt/.json file to bring
+ *    cards (with their original category and tags) back. Goes through
+ *    duplicate review in App.jsx before anything is actually added.
+ *    See utils/backupImport.js.
  *  - History — the last 30 distinct words viewed, most recent first,
  *    with a way to clear it.
  *  - Reset Data
@@ -22,13 +26,24 @@
  *  - onResetData: () => void
  *  - cards: full card array (for export)
  *  - categories: string[] from getCategoryList() (for the export scope picker)
- *  - tags: active real tag list (for export + history display)
+ *  - tags: active real tag list (for export + restore + history display)
  *  - history: [{cardId, word, meaning, category, viewedAt}], most recent first
  *  - onClearHistory: () => void
+ *  - onRestoreBackup: (cards: Array) => void — called with parsed cards from an uploaded backup file
  */
 
-import React, { useState } from "react";
-import { X, Volume2, Shuffle, RotateCcw, Trash2, Download, History as HistoryIcon } from "lucide-react";
+import React, { useState, useRef } from "react";
+import {
+  X,
+  Volume2,
+  Shuffle,
+  RotateCcw,
+  Trash2,
+  Download,
+  Upload,
+  History as HistoryIcon,
+  AlertCircle,
+} from "lucide-react";
 import {
   EXPORT_SCOPES,
   buildTextExport,
@@ -36,6 +51,7 @@ import {
   suggestExportFilename,
   downloadTextFile,
 } from "../utils/exportWords";
+import { parseBackupFile } from "../utils/backupImport";
 import { ALL_WORDS_CATEGORY } from "../utils/categoryTree";
 
 export default function SettingsPanel({
@@ -49,9 +65,12 @@ export default function SettingsPanel({
   tags = [],
   history = [],
   onClearHistory,
+  onRestoreBackup,
 }) {
   const [exportScope, setExportScope] = useState(EXPORT_SCOPES.ALL);
   const [showHistory, setShowHistory] = useState(false);
+  const [restoreError, setRestoreError] = useState(null);
+  const restoreFileInputRef = useRef(null);
 
   // Real category names only (exclude the "All Words" pseudo-category,
   // since that's already covered by the ALL scope option).
@@ -65,6 +84,22 @@ export default function SettingsPanel({
     } else {
       const text = buildTextExport(cards, exportScope, tags);
       downloadTextFile(filename, text, "text/plain");
+    }
+  };
+
+  const handleRestoreFileChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const restoredCards = parseBackupFile(file.name, text, tags);
+      setRestoreError(null);
+      onRestoreBackup?.(restoredCards);
+    } catch (err) {
+      setRestoreError(err.message || "Could not read this backup file.");
+    } finally {
+      event.target.value = ""; // allow re-selecting the same file later
     }
   };
 
@@ -169,6 +204,47 @@ export default function SettingsPanel({
                 .json
               </button>
             </div>
+
+            {exportScope === EXPORT_SCOPES.NO_CATEGORY && (
+              <p className="text-[11px] text-ink/40 mt-2 flex items-start gap-1.5">
+                <AlertCircle size={12} className="flex-shrink-0 mt-0.5" />
+                For a backup you plan to restore later, "All words (grouped
+                by category)" is the safer choice — this grouping can't
+                always tell categories and tags apart when restored.
+              </p>
+            )}
+          </div>
+
+          {/* ----- Restore from backup ----- */}
+          <div className="pt-5 border-t border-rule">
+            <div className="flex items-center gap-2 mb-2">
+              <Upload size={16} className="text-ink/50" />
+              <h3 className="font-body text-sm font-medium text-ink">Restore from backup</h3>
+            </div>
+            <p className="text-xs text-ink/50 mb-3">
+              Upload a .txt or .json file you previously exported from here
+              to bring those words — and their categories and tags — back.
+            </p>
+            <button
+              type="button"
+              onClick={() => restoreFileInputRef.current?.click()}
+              className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-sm border border-rule text-sm text-ink/75 hover:border-ink/40 transition-colors"
+            >
+              <Upload size={13} />
+              Choose backup file
+            </button>
+            <input
+              ref={restoreFileInputRef}
+              type="file"
+              accept=".txt,.json"
+              onChange={handleRestoreFileChange}
+              className="hidden"
+            />
+            {restoreError && (
+              <p className="text-xs text-accent mt-2" role="alert">
+                {restoreError}
+              </p>
+            )}
           </div>
 
           {/* ----- History ----- */}

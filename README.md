@@ -54,6 +54,25 @@ npm run build    # production build -> dist/
 - **Multi-tagging** — a card can hold several tags at once (e.g. Easy +
   Done, or Favorite + Done). The one exception: Difficult and Easy are
   mutually exclusive — selecting one clears the other.
+- **Visual regex feedback** — while building a format in "Easy" or
+  "Advanced" mode, paste a sample of your real text and see it
+  highlighted live: word in one color, meaning in another, example and
+  its translation in two more, with a swatch legend. Shows exactly what
+  your pattern is selecting before you commit to it.
+- **Backup & restore** — Settings has a "Restore from backup" uploader
+  that reads back a `.txt` or `.json` file previously made with Export,
+  bringing categories and tags back exactly as they were (custom tags
+  that were since deleted are automatically re-created). For backups
+  you intend to restore later, export with "All words (grouped by
+  category)" — the "no category" grouping is for reading, not backup,
+  since it can't always reconstruct which tags belonged to the same card.
+- **Duplicate detection on import/restore** — before anything is added,
+  incoming cards are checked against your existing deck by **word +
+  meaning only** (case/whitespace-insensitive) — category, tags, and
+  examples are ignored, since the same word with a genuinely different
+  meaning should never be flagged. Anything that matches shows up in a
+  review screen, skipped by default, with a one-click "add anyway" per
+  item or in bulk.
 - **Keyboard navigation** — Space or Enter flips the active card,
   ArrowRight/ArrowLeft move to the next/previous card. Disabled
   automatically while typing in any text field.
@@ -66,9 +85,11 @@ src/
   utils/
     textParser.js               Client-side parser for the original numbered format
     easyFormatBuilder.js         Turns plain-language choices into a regex (the "Easy" mode)
-    formatProfiles.js           All format presets + custom regex engine
+    formatProfiles.js           All format presets + custom regex engine + match-span inspector
     fileImport.js                .txt / .pdf / .json file reading and normalization
     exportWords.js               Builds .txt / .json exports, scoped by category or tag
+    backupImport.js              Reads the app's own export formats back into full cards
+    duplicates.js                Word+meaning duplicate detection (category/tags ignored)
     categoryTree.js              Categories, tags, multi-tag toggling, category merge, derived "unread"
     storage.js                   localStorage read/write + old-data migration
   hooks/
@@ -79,8 +100,10 @@ src/
     Sidebar.jsx                  Category "drawer" + tag sub-filters, category/tag management
     Flashcard.jsx                The interactive index-card (click-to-flip, multi-tag buttons)
     DeckControls.jsx             Previous / Next navigation
-    SettingsPanel.jsx            Slide-in settings drawer: preferences, export, history, reset
+    SettingsPanel.jsx            Slide-in settings drawer: preferences, export, restore, history, reset
     ImportPanel.jsx              Easy/Preset/Advanced format selection + paste/file import
+    RegexHighlightPreview.jsx    Color-coded "what is my format selecting" live highlight
+    DuplicateReviewPanel.jsx     Shared skip/add-anyway review screen for import + restore
   App.jsx                        Layout + wiring between the above
   main.jsx, index.css            Entry point + design tokens / global styles
 tailwind.config.js               Color palette (paper/ink/rule/accent/sage/brass) + fonts
