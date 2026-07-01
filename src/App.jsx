@@ -14,7 +14,7 @@
  */
 
 import React, { useState, useMemo, useEffect } from "react";
-import { Settings as SettingsIcon, Plus } from "lucide-react";
+import { Menu, Settings as SettingsIcon, Plus } from "lucide-react";
 
 import Sidebar from "./components/Sidebar";
 import Flashcard from "./components/Flashcard";
@@ -61,6 +61,7 @@ export default function App() {
   const [activeTag, setActiveTag] = useState("all");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Set whenever a parsed/restored batch has one or more duplicates
   // (by word+meaning) against the existing deck: { cards, mode }, where
@@ -114,6 +115,12 @@ export default function App() {
   const hasExistingCards = cards.length > 0;
   const showImportView = (!hasExistingCards || isImporting) && !pendingImport;
   const showDuplicateReview = !!pendingImport;
+
+  useEffect(() => {
+    if (showImportView || showDuplicateReview) {
+      setIsSidebarOpen(false);
+    }
+  }, [showImportView, showDuplicateReview]);
 
   /**
    * Entry point for BOTH the ImportPanel ("Add words" / first import)
@@ -170,10 +177,20 @@ export default function App() {
   });
 
   return (
-    <div className="paper-texture min-h-screen flex flex-col font-body">
+    <div className="paper-texture min-h-screen md:h-screen md:overflow-hidden flex flex-col font-body">
       {/* Top bar */}
       <header className="flex items-center justify-between px-5 py-3 border-b border-rule bg-paper">
         <div className="flex items-center gap-2">
+          {!showImportView && !showDuplicateReview && (
+            <button
+              type="button"
+              onClick={() => setIsSidebarOpen(true)}
+              aria-label="Open sidebar"
+              className="md:hidden p-2 -ml-1 rounded-sm border border-rule text-ink/70 hover:border-ink/40 transition-colors"
+            >
+              <Menu size={16} />
+            </button>
+          )}
           <span className="font-display font-semibold text-lg text-ink">
             Vocabulary Drawer
           </span>
@@ -230,7 +247,15 @@ export default function App() {
       )}
 
       {!showImportView && !showDuplicateReview && (
-        <div className="flex flex-1 flex-col md:flex-row">
+        <div className="flex flex-1 min-h-0 flex-col md:flex-row md:overflow-hidden">
+          {isSidebarOpen && (
+            <button
+              type="button"
+              aria-label="Close sidebar overlay"
+              onClick={() => setIsSidebarOpen(false)}
+              className="fixed inset-0 z-30 bg-ink/25 backdrop-blur-[1px] md:hidden"
+            />
+          )}
           <Sidebar
             categories={categories}
             activeCategory={activeCategory}
@@ -242,9 +267,11 @@ export default function App() {
             onAddTag={addCustomTag}
             onRenameTag={renameTag}
             onDeleteTag={deleteCustomTag}
+            isMobileOpen={isSidebarOpen}
+            onRequestClose={() => setIsSidebarOpen(false)}
           />
 
-          <main className="flex-1 flex items-center justify-center px-6 py-10">
+          <main className="flex-1 min-h-0 flex items-center justify-center px-6 py-10 md:overflow-hidden">
             <div className="w-full max-w-md">
               <Flashcard
                 card={currentCard}

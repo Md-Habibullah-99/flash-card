@@ -58,6 +58,8 @@ export default function Sidebar({
   onAddTag,
   onRenameTag,
   onDeleteTag,
+  isMobileOpen,
+  onRequestClose,
 }) {
   // Tracks which category drawers are expanded. "All Words" starts open
   // since it's almost always the first thing a learner browses.
@@ -112,14 +114,33 @@ export default function Sidebar({
     setRenameTagValue("");
   };
 
+  const handleSelect = (category, tagId) => {
+    onSelect(category, tagId);
+    onRequestClose?.();
+  };
+
   return (
     <nav
       aria-label="Flashcard categories"
-      className="w-full md:w-72 flex-shrink-0 border-r border-rule bg-paper md:h-full overflow-y-auto fixed"
+      className={`fixed inset-y-0 left-0 z-40 w-80 max-w-[85vw] flex-shrink-0 border-r border-rule bg-paper md:static md:z-auto md:w-72 md:max-w-none md:h-full md:overflow-y-auto overflow-y-auto shadow-xl md:shadow-none transform transition-transform duration-200 ease-out ${
+        isMobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+      }`}
     >
-      <div className="px-4 py-4 flex items-center gap-2 border-b border-rule">
-        <Library size={18} className="text-accent" strokeWidth={2.2} />
-        <span className="font-display font-semibold text-ink text-lg">Word Drawer</span>
+      <div className="px-4 py-4 flex items-center justify-between gap-2 border-b border-rule">
+        <div className="flex items-center gap-2 min-w-0">
+          <Library size={18} className="text-accent" strokeWidth={2.2} />
+          <span className="font-display font-semibold text-ink text-lg truncate">
+            Word Drawer
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onRequestClose}
+          aria-label="Close sidebar"
+          className="md:hidden p-2 rounded-sm text-ink/55 hover:text-ink hover:bg-ink/[0.04]"
+        >
+          <X size={16} />
+        </button>
       </div>
 
       <ul className="py-2">
@@ -226,7 +247,7 @@ export default function Sidebar({
                   <li>
                     <button
                       type="button"
-                      onClick={() => onSelect(category, "all")}
+                      onClick={() => handleSelect(category, "all")}
                       className={`w-full flex items-center justify-between px-2 py-1.5 rounded-sm font-body text-[13px] transition-colors ${
                         isCategoryActive && activeTag === "all"
                           ? "bg-accent/10 text-accent font-medium"
@@ -244,7 +265,7 @@ export default function Sidebar({
                   <li>
                     <button
                       type="button"
-                      onClick={() => onSelect(category, UNREAD_TAG_ID)}
+                      onClick={() => handleSelect(category, UNREAD_TAG_ID)}
                       className={`w-full flex items-center justify-between px-2 py-1.5 rounded-sm font-body text-[13px] transition-colors ${
                         isCategoryActive && activeTag === UNREAD_TAG_ID
                           ? "bg-accent/10 text-accent font-medium"
@@ -292,7 +313,7 @@ export default function Sidebar({
                       <li key={tag.id} className="group flex items-center">
                         <button
                           type="button"
-                          onClick={() => onSelect(category, tag.id)}
+                          onClick={() => handleSelect(category, tag.id)}
                           className={`flex-1 min-w-0 flex items-center justify-between px-2 py-1.5 rounded-sm font-body text-[13px] transition-colors ${
                             isActive
                               ? "bg-accent/10 text-accent font-medium"
