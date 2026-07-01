@@ -49,21 +49,33 @@ export function useDeckNavigation(deckCards, deckKey, shuffleMode, resetMeaningO
   // status-toggle re-render — so marking the card you're looking at
   // doesn't yank you back to the start of the deck.
   useEffect(() => {
-    const ids = deckCards.map((c) => c.id);
-    const nextOrder = shuffleMode ? shuffleArray(ids) : ids;
-    setOrderedIds(nextOrder);
+  const ids = deckCards.map((c) => c.id);
+  const nextOrder = shuffleMode ? shuffleArray(ids) : ids;
 
-    if (previousDeckKey.current !== deckKey) {
-      setCurrentIndex(0);
-      setIsRevealed(false);
-      previousDeckKey.current = deckKey;
-    } else {
-      // Same view, but the list size may have shrunk (card moved out of
-      // this filter). Clamp the index so we don't point past the end.
-      setCurrentIndex((idx) => Math.min(idx, Math.max(nextOrder.length - 1, 0)));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deckKey, deckCards.length, shuffleMode]);
+  // If the deck is empty, reset everything and bail out
+  if (nextOrder.length === 0) {
+    setOrderedIds([]);
+    setCurrentIndex(0);
+    setIsRevealed(false);
+    previousDeckKey.current = deckKey;
+    return;
+  }
+
+  setOrderedIds(nextOrder);
+
+  if (previousDeckKey.current !== deckKey) {
+    // View changed – reset to the first card
+    setCurrentIndex(0);
+    setIsRevealed(false);
+    previousDeckKey.current = deckKey;
+  } else {
+    // Same view – clamp index safely
+    setCurrentIndex((idx) => {
+      const safeIdx = Math.min(idx, nextOrder.length - 1);
+      return Math.max(safeIdx, 0); // ensure we never go negative
+    });
+  }
+}, [deckKey, deckCards.length, shuffleMode]);
 
   const cardsById = useMemo(() => {
     const map = new Map();
